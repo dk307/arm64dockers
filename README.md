@@ -12,6 +12,7 @@ ARM64-only Docker containers built and published to GHCR. Single repo, automated
 | Container | Upstream | Description | Tags |
 |-----------|----------|-------------|------|
 | [`llama-cpp-embed-nomic`](#llama-cpp-embed-nomic) | [ggml-org/llama.cpp](https://github.com/ggml-org/llama.cpp) | nomic-embed-text embedding server | `b10107`, `latest` |
+| [`yolo-rest`](#yolo-rest) | [Tencent/ncnn](https://github.com/Tencent/ncnn) | YOLO object-detection REST server | `ncnn-20260526`, `latest` |
 
 ---
 
@@ -78,26 +79,130 @@ docker inspect --format='{{.State.Health.Status}}' embed
 
 ---
 
+### yolo-rest
+
+YOLO object-detection REST server using ncnn. Bundles **yolo26n** (fast, ~40.9 mAP) and **yolo26m** (accurate, ~53.1 mAP) with FP16 inference. Built with Clang 21 and Cortex-A78C tuned flags. No Python at runtime.
+
+**Pull:**
+```bash
+# Latest ncnn release
+docker pull ghcr.io/dk307/yolo-rest:latest
+
+# Pinned to specific ncnn version
+docker pull ghcr.io/dk307/yolo-rest:ncnn-20260526
+```
+
+**Run:**
+```bash
+# Docker — default model is yolo26m
+docker run -d \
+  --name yolo \
+  -p 18080:18080 \
+  ghcr.io/dk307/yolo-rest:latest
+
+# Docker — use yolo26n (fast)
+docker run -d \
+  --name yolo-fast \
+  -p 18080:18080 \
+  ghcr.io/dk307/yolo-rest:latest \
+  --model_type yolo26n
+
+# Podman (with auto-restart on unhealthy)
+podman run -d \
+  --name yolo \
+  -p 18080:18080 \
+  --health-cmd "curl -sf http://localhost:18080/health || exit 1" \
+  --health-interval 30s \
+  --health-timeout 5s \
+  --health-retries 3 \
+  --health-start-period 10s \
+  --health-on-failure restart \
+  ghcr.io/dk307/yolo-rest:latest
+```
+
+**Endpoints:**
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/health` | GET | Health check, default model, available models list |
+| `/models` | GET | List bundled models with param paths |
+| `/detect` | POST | Object detection on image(s) |
+
+**POST /detect query parameters:**
+| Param | Type | Default | Description |
+|-------|------|---------|-------------|
+| `model_type` | string | `yolo26m` | Bundled model: `yolo26n` or `yolo26m` |
+| `model` | string | — | Full path to `.ncnn.param` (overrides model_type) |
+| `conf` | float | `0.25` | Confidence threshold |
+| `classes` | string | all | Comma-separated COCO class names or IDs |
+
+**Usage examples:**
+```bash
+# Health
+curl http://localhost:18080/health
+
+# List models
+curl http://localhost:18080/models
+
+# Detect (default model: yolo26m)
+curl -X POST http://localhost:18080/detect \
+  -H 'Content-Type: application/octet-stream' \
+  --data-binary @image.jpg
+
+# Detect with yolo26n (fast), only people, conf >= 0.4
+curl -X POST 'http://localhost:18080/detect?model_type=yolo26n&classes=person&conf=0.4' \
+  -H 'Content-Type: application/octet-stream' \
+  --data-binary @image.jpg
+
+# Batch (multipart)
+curl -F f1=@frame1.jpg -F f2=@frame2.jpg \
+  'http://localhost:18080/detect?model_type=yolo26n'
+```
+
+**Healthcheck:** The image includes a Dockerfile `HEALTHCHECK` (30s interval, 5s timeout, 10s start period, 3 retries) that tests the `/health` endpoint. Check status with:
+```bash
+docker inspect --format='{{.State.Health.Status}}' yolo
+```
+
+---
+
 ## How Updates Work
 
-Upstream releases are monitored daily. When a new llama.cpp release is detected:
+Upstream releases are monitored daily. When a new release is detected:
 
-1. `release-monitor.yml` compares the upstream tag against published GHCR tags
-2. If new, triggers `llama-cpp-embed-nomic.yml` via `repository_dispatch`
-3. Build compiles llama.cpp from the release tag source
-4. Smoke tests verify health, model loading, and embedding generation
-5. Image pushed as `ghcr.io/dk307/llama-cpp-embed-nomic:<tag>` and `:latest`
+**llama-cpp-embed-nomic:** `release-monitor.yml` checks [ggml-org/llama.cpp](https://github.com/ggml-org/llama.cpp) daily → triggers `llama-cpp-embed-nomic.yml` → build, test, push.
 
-**Manual trigger:** `gh workflow run llama-cpp-embed-nomic.yml -f tag=<release-tag>`
+**yolo-rest:** `ncnn-release-monitor.yml` checks [Tencent/ncnn](https://github.com/Tencent/ncnn) daily → triggers `yolo-rest.yml` → build, test, push.
+
+1. Monitor workflow compares upstream tag against published GHCR tags
+2. If new, triggers build workflow via `repository_dispatch`
+3. Build compiles ncnn from source, builds server binary, downloads models
+4. Smoke tests verify health, model listing, and detection with each model type
+5. Image pushed to GHCR with version tag and `:latest`
+
+**Manual trigger:**
+```bash
+# llama-cpp
+gh workflow run llama-cpp-embed-nomic.yml -f tag=<release-tag>
+
+# yolo-rest
+gh workflow run yolo-rest.yml -f ncnn_tag=20260526
+```
 
 ---
 
 ## Building Locally
 
 ```bash
-# Requires the upstream release tag as build arg
+# llama-cpp — requires the upstream release tag as build arg
 docker build \
   --build-arg LLAMA_CPP_TAG=b10107 \
   -t llama-cpp-embed-nomic:local \
   ./llama-cpp
+
+# yolo-rest — requires ncnn release tag
+docker build \
+  --build-arg NCNN_TAG=20260526 \
+  --build-arg MODELS_TAG=yolo-models-v1 \
+  -t yolo-rest:local \
+  ./yolo-rest
 ```

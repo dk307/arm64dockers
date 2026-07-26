@@ -1,0 +1,337 @@
+name: Build yolo-rest
+
+on:
+  repository_dispatch:
+    types: [ncnn-release]
+
+  workflow_dispatch:
+    inputs:
+      ncnn_tag:
+        description: 'ncnn release tag (e.g. 20260526)'
+        required: true
+        type: string
+      models_tag:
+        description: 'Model assets release tag (default: yolo-models-v1)'
+        required: false
+        default: 'yolo-models-v1'
+        type: string
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository_owner }}/yolo-rest
+  NCNN_DEFAULT: '20260526'
+  MODELS_DEFAULT: 'yolo-models-v1'
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  build-test-push:
+    runs-on: ubuntu-24.04-arm  # Native ARM64 — no QEMU needed
+    steps:
+      - name: Resolve tags
+        id: tag
+        run: |
+          echo "=== Tag resolution ==="
+          echo "Trigger: ${{ github.event_name }}"
+
+          if [ "${{ github.event_name }}" = "repository_dispatch" ]; then
+            TAG="${{ github.event.client_payload.ncnn_tag }}"
+            MODELS="${{ env.MODELS_DEFAULT }}"
+            echo "From dispatch: ncnn=$TAG"
+          elif [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            TAG="${{ inputs.ncnn_tag }}"
+            MODELS="${{ inputs.models_tag }}"
+            echo "From manual: ncnn=$TAG models=$MODELS"
+          fi
+
+          TAG="${TAG:-${{ env.NCNN_DEFAULT }}}"
+          MODELS="${MODELS:-${{ env.MODELS_DEFAULT }}}"
+
+          # Validate ncnn tag: digits only (e.g. 20260526)
+          if ! echo "$TAG" | grep -qP '^[0-9]+$'; then
+            echo "ERROR: Invalid ncnn tag format: $TAG (expected digits like 20260526)"
+            exit 1
+          fi
+
+          echo "ncnn_tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "models_tag=$MODELS" >> "$GITHUB_OUTPUT"
+          echo ""
+          echo "ncnn: $TAG"
+          echo "models: $MODELS"
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build image
+        uses: docker/build-push-action@v6
+        with:
+          context: yolo-rest
+          platforms: linux/arm64
+          push: false
+          load: true
+          tags: ${{ env.IMAGE_NAME }}:test
+          build-args: |
+            NCNN_TAG=${{ steps.tag.outputs.ncnn_tag }}
+            MODELS_TAG=${{ steps.tag.outputs.models_tag }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # ── Smoke tests ──────────────────────────────────────────
+
+      - name: Start container
+        run: |
+          docker run -d --name yolo-test \
+            -p 18080:18080 \
+            --health-cmd 'curl -sf http://localhost:18080/health || exit 1' \
+            --health-interval 5s \
+            --health-timeout 5s \
+            --health-start-period 15s \
+            --health-retries 3 \
+            ${{ env.IMAGE_NAME }}:test
+          echo "Waiting for container to start..."
+          sleep 5
+
+      - name: Test 1 — /health endpoint
+        run: |
+          echo "=== Test 1: /health ==="
+          RESP=$(curl -sf http://localhost:18080/health)
+          echo "$RESP" | jq .
+          
+          # Verify status
+          STATUS=$(echo "$RESP" | jq -r '.status')
+          if [ "$STATUS" != "ok" ]; then
+            echo "FAIL: status=$STATUS (expected ok)"
+            exit 1
+          fi
+          echo "PASS: status=ok"
+          
+          # Verify default model type is yolo26m
+          DEF=$(echo "$RESP" | jq -r '.default_model_type')
+          if [ "$DEF" != "yolo26m" ]; then
+            echo "FAIL: default_model_type=$DEF (expected yolo26m)"
+            exit 1
+          fi
+          echo "PASS: default_model_type=yolo26m"
+          
+          # Verify both models listed
+          MODELS=$(echo "$RESP" | jq -r '.models | sort | join(",")')
+          if [ "$MODELS" != "yolo26m,yolo26n" ]; then
+            echo "FAIL: models=$MODELS (expected yolo26m,yolo26n)"
+            exit 1
+          fi
+          echo "PASS: models=[yolo26m, yolo26n]"
+
+      - name: Test 2 — Docker HEALTHCHECK status
+        run: |
+          echo "=== Test 2: Docker HEALTHCHECK ==="
+          for i in $(seq 1 12); do
+            STATUS=$(docker inspect --format='{{.State.Health.Status}}' yolo-test 2>/dev/null || echo "unknown")
+            echo "  [$i/12] Health status: $STATUS"
+            if [ "$STATUS" = "healthy" ]; then
+              echo "PASS: container is healthy"
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "FAIL: container did not become healthy within 60s"
+          docker logs yolo-test
+          docker inspect --format='{{json .State.Health}}' yolo-test | jq .
+          exit 1
+
+      - name: Test 3 — GET /models
+        run: |
+          echo "=== Test 3: /models ==="
+          RESP=$(curl -sf http://localhost:18080/models)
+          echo "$RESP" | jq .
+          
+          # Verify yolo26n present
+          N=$(echo "$RESP" | jq -r '.models[] | select(.name=="yolo26n") | .param')
+          if [ "$N" != "/models/yolo26n_opt.param" ]; then
+            echo "FAIL: yolo26n param=$N"
+            exit 1
+          fi
+          echo "PASS: yolo26n -> /models/yolo26n_opt.param"
+          
+          # Verify yolo26m present
+          M=$(echo "$RESP" | jq -r '.models[] | select(.name=="yolo26m") | .param')
+          if [ "$M" != "/models/yolo26m_opt.param" ]; then
+            echo "FAIL: yolo26m param=$M"
+            exit 1
+          fi
+          echo "PASS: yolo26m -> /models/yolo26m_opt.param"
+
+      - name: Test 4 — Detect with model_type=yolo26n
+        run: |
+          echo "=== Test 4: detect yolo26n ==="
+          curl -sf -o /tmp/bus.jpg https://raw.githubusercontent.com/ultralytics/assets/main/bus.jpg
+          
+          RESP=$(curl -sf -X POST 'http://localhost:18080/detect?model_type=yolo26n' \
+            -H 'Content-Type: application/octet-stream' \
+            --data-binary @/tmp/bus.jpg)
+          echo "$RESP" | jq .
+          
+          # Verify model path
+          MODEL=$(echo "$RESP" | jq -r '.model')
+          if [ "$MODEL" != "/models/yolo26n_opt.param" ]; then
+            echo "FAIL: model=$MODEL"
+            exit 1
+          fi
+          echo "PASS: model=/models/yolo26n_opt.param"
+          
+          # Verify at least 2 detections (bus + people)
+          COUNT=$(echo "$RESP" | jq '.detections | length')
+          if [ "$COUNT" -lt 2 ]; then
+            echo "FAIL: expected >= 2 detections, got $COUNT"
+            exit 1
+          fi
+          echo "PASS: $COUNT detections"
+          
+          # Verify bus (class 5) detected with score > 0.5
+          BUS_SCORE=$(echo "$RESP" | jq '[.detections[] | select(.class==5) | .score] | max // 0')
+          BUS_OK=$(echo "$BUS_SCORE > 0.5" | bc -l)
+          if [ "$BUS_OK" != "1" ]; then
+            echo "FAIL: bus score=$BUS_SCORE (expected > 0.5)"
+            exit 1
+          fi
+          echo "PASS: bus detected with score $BUS_SCORE"
+          
+          # Verify at least 1 person (class 0) detected with score > 0.3
+          PERSON_COUNT=$(echo "$RESP" | jq '[.detections[] | select(.class==0) and (.score > 0.3)] | length')
+          if [ "$PERSON_COUNT" -lt 1 ]; then
+            echo "FAIL: no person (class 0) detected with score > 0.3"
+            exit 1
+          fi
+          echo "PASS: $PERSON_COUNT person(s) detected"
+
+      - name: Test 5 — Detect with model_type=yolo26m
+        run: |
+          echo "=== Test 5: detect yolo26m ==="
+          RESP=$(curl -sf -X POST 'http://localhost:18080/detect?model_type=yolo26m' \
+            -H 'Content-Type: application/octet-stream' \
+            --data-binary @/tmp/bus.jpg)
+          echo "$RESP" | jq .
+          
+          # Verify model path
+          MODEL=$(echo "$RESP" | jq -r '.model')
+          if [ "$MODEL" != "/models/yolo26m_opt.param" ]; then
+            echo "FAIL: model=$MODEL"
+            exit 1
+          fi
+          echo "PASS: model=/models/yolo26m_opt.param"
+          
+          # Verify at least 2 detections (bus + people)
+          COUNT=$(echo "$RESP" | jq '.detections | length')
+          if [ "$COUNT" -lt 2 ]; then
+            echo "FAIL: expected >= 2 detections, got $COUNT"
+            exit 1
+          fi
+          echo "PASS: $COUNT detections"
+          
+          # Verify bus (class 5) detected with score > 0.5
+          BUS_SCORE=$(echo "$RESP" | jq '[.detections[] | select(.class==5) | .score] | max // 0')
+          BUS_OK=$(echo "$BUS_SCORE > 0.5" | bc -l)
+          if [ "$BUS_OK" != "1" ]; then
+            echo "FAIL: bus score=$BUS_SCORE (expected > 0.5)"
+            exit 1
+          fi
+          echo "PASS: bus detected with score $BUS_SCORE"
+          
+          # Verify at least 1 person (class 0) detected with score > 0.3
+          PERSON_COUNT=$(echo "$RESP" | jq '[.detections[] | select(.class==0) and (.score > 0.3)] | length')
+          if [ "$PERSON_COUNT" -lt 1 ]; then
+            echo "FAIL: no person (class 0) detected with score > 0.3"
+            exit 1
+          fi
+          echo "PASS: $PERSON_COUNT person(s) detected"
+
+      - name: Test 6 — Default model (no model_type specified)
+        run: |
+          echo "=== Test 6: default model (yolo26m) ==="
+          RESP=$(curl -sf -X POST 'http://localhost:18080/detect' \
+            -H 'Content-Type: application/octet-stream' \
+            --data-binary @/tmp/bus.jpg)
+          echo "$RESP" | jq .
+          
+          # Verify default model is yolo26m
+          MODEL=$(echo "$RESP" | jq -r '.model')
+          if [ "$MODEL" != "/models/yolo26m_opt.param" ]; then
+            echo "FAIL: model=$MODEL (expected /models/yolo26m_opt.param)"
+            exit 1
+          fi
+          echo "PASS: default model is yolo26m"
+          
+          # Verify at least 2 detections (bus + people)
+          COUNT=$(echo "$RESP" | jq '.detections | length')
+          if [ "$COUNT" -lt 2 ]; then
+            echo "FAIL: expected >= 2 detections, got $COUNT"
+            exit 1
+          fi
+          echo "PASS: $COUNT detections"
+          
+          # Verify bus (class 5) detected with score > 0.5
+          BUS_SCORE=$(echo "$RESP" | jq '[.detections[] | select(.class==5) | .score] | max // 0')
+          BUS_OK=$(echo "$BUS_SCORE > 0.5" | bc -l)
+          if [ "$BUS_OK" != "1" ]; then
+            echo "FAIL: bus score=$BUS_SCORE (expected > 0.5)"
+            exit 1
+          fi
+          echo "PASS: bus detected with score $BUS_SCORE"
+          
+          # Verify at least 1 person (class 0) detected with score > 0.3
+          PERSON_COUNT=$(echo "$RESP" | jq '[.detections[] | select(.class==0) and (.score > 0.3)] | length')
+          if [ "$PERSON_COUNT" -lt 1 ]; then
+            echo "FAIL: no person (class 0) detected with score > 0.3"
+            exit 1
+          fi
+          echo "PASS: $PERSON_COUNT person(s) detected"
+
+      - name: Stop container
+        if: always()
+        run: docker rm -f yolo-test 2>/dev/null || true
+
+      # ── Push to GHCR ─────────────────────────────────────────
+
+      - name: Push image
+        run: |
+          docker tag ${{ env.IMAGE_NAME }}:test ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:ncnn-${{ steps.tag.outputs.ncnn_tag }}
+          docker tag ${{ env.IMAGE_NAME }}:test ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+          docker push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:ncnn-${{ steps.tag.outputs.ncnn_tag }}
+          docker push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+
+      # ── Update README ────────────────────────────────────────
+
+      - name: Update README.md
+        run: |
+          echo "=== Updating README ==="
+          NCNN_TAG="${{ steps.tag.outputs.ncnn_tag }}"
+          IMAGE="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}"
+          
+          # Check if yolo-rest entry exists
+          if grep -q "ghcr.io/dk307/yolo-rest" README.md; then
+            # Update ncnn version tag
+            sed -i "s|ghcr.io/dk307/yolo-rest:ncnn-[0-9]*|ghcr.io/dk307/yolo-rest:ncnn-${NCNN_TAG}|g" README.md
+            echo "Updated existing yolo-rest entry (ncnn-$NCNN_TAG)"
+          else
+            echo "yolo-rest entry not found in README — skipping auto-add (add manually)"
+          fi
+
+      - name: Commit README changes
+        if: always()
+        run: |
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          git add README.md
+          git diff --cached --quiet || git commit -m "chore(yolo-rest): update README to ncnn-${{ steps.tag.outputs.ncnn_tag }}"
+          git push origin main
