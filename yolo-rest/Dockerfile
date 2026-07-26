@@ -10,7 +10,7 @@ ARG NCNN_TAG
 ENV DEBIAN_FRONTEND=noninteractive
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    clang lld llvm libomp-dev cmake git ca-certificates \
+    clang lld llvm libomp-dev cmake make git ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
 # ── ncnn (CPU-only, static, clang + thinLTO) ──
