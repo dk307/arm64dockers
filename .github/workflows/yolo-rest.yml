@@ -175,11 +175,10 @@ jobs:
       - name: Test 4 — Detect with model_type=yolo26n
         run: |
           echo "=== Test 4: detect yolo26n ==="
-          curl -sf -o /tmp/bus.jpg https://raw.githubusercontent.com/ultralytics/assets/main/bus.jpg
           
           RESP=$(curl -sf -X POST 'http://localhost:18080/detect?model_type=yolo26n' \
             -H 'Content-Type: application/octet-stream' \
-            --data-binary @/tmp/bus.jpg)
+            --data-binary @yolo-rest/test.jpg)
           echo "$RESP" | jq .
           
           # Verify model path
@@ -220,7 +219,7 @@ jobs:
           echo "=== Test 5: detect yolo26m ==="
           RESP=$(curl -sf -X POST 'http://localhost:18080/detect?model_type=yolo26m' \
             -H 'Content-Type: application/octet-stream' \
-            --data-binary @/tmp/bus.jpg)
+            --data-binary @yolo-rest/test.jpg)
           echo "$RESP" | jq .
           
           # Verify model path
@@ -261,7 +260,7 @@ jobs:
           echo "=== Test 6: default model (yolo26m) ==="
           RESP=$(curl -sf -X POST 'http://localhost:18080/detect' \
             -H 'Content-Type: application/octet-stream' \
-            --data-binary @/tmp/bus.jpg)
+            --data-binary @yolo-rest/test.jpg)
           echo "$RESP" | jq .
           
           # Verify default model is yolo26m
