@@ -65,10 +65,9 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /src/build/bin/ /llm/llama-cpp/bin/
-COPY --from=builder /src/build/lib*/ /llm/llama-cpp/lib/
 COPY --from=model /models/ /llm/models/
 
-ENV LD_LIBRARY_PATH=/llm/llama-cpp/lib
+ENV LD_LIBRARY_PATH=/llm/llama-cpp/lib:/llm/llama-cpp/bin
 
 EXPOSE 8080
 
