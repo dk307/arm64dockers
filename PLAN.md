@@ -29,6 +29,8 @@ Build and publish ARM64-only Docker containers to GitHub Container Registry (GHC
 ```
 arm64devcontainer/
 ├── PLAN.md                              # This file
+├── README.md                            # Container catalog (auto-updated by CI)
+├── AGENTS.md                            # AI assistant context
 ├── .gitignore
 ├── .github/
 │   └── workflows/
@@ -410,7 +412,7 @@ jobs:
 - `repository_dispatch` — from release-monitor (event type `llama-cpp-release`)
 - `workflow_dispatch` — manual trigger with release tag input
 
-**Pipeline:** Build → Smoke test → Push (only pushes if tests pass)
+**Pipeline:** Build → Smoke test → Push → Update README → Commit
 
 ```yaml
 name: Build llama-cpp-embed-nomic
@@ -431,7 +433,7 @@ env:
   IMAGE_NAME: ${{ github.repository_owner }}/llama-cpp-embed-nomic
 
 permissions:
-  contents: read
+  contents: write
   packages: write
 
 jobs:
@@ -519,6 +521,22 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           build-args: |
             LLAMA_CPP_TAG=${{ steps.tag.outputs.tag }}
+
+      - name: Update README with new tag
+        run: |
+          TAG="${{ steps.tag.outputs.tag }}"
+          sed -i "/llama-cpp-embed-nomic/s|\`[a-zA-Z0-9._-]*\`, \`latest\`|\`${TAG}\`, \`latest\`|" README.md
+          sed -i "s|llama-cpp-embed-nomic:[a-zA-Z0-9._-]*|llama-cpp-embed-nomic:${TAG}|g" README.md
+
+      - name: Commit README update
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add README.md
+          if ! git diff --cached --quiet; then
+            git commit -m "docs: update README for llama-cpp-embed-nomic:${{ steps.tag.outputs.tag }}"
+            git push origin main
+          fi
 ```
 
 ### 5.6 Workflow — `ncnn.yml` (future)
@@ -559,6 +577,13 @@ release-monitor.yml (daily cron)
   → checks api.github.com/repos/ggml-org/llama.cpp/releases/latest
   → compares tag against GHCR image tags
   → if new: triggers llama-cpp-embed-nomic.yml via repository_dispatch
+
+llama-cpp-embed-nomic.yml:
+  → builds image with release tag
+  → smoke tests (health, model, embedding, dimensions)
+  → pushes to GHCR (:bNNNN + :latest)
+  → updates README.md with new tag
+  → commits and pushes README to main
 ```
 
 ### Manual (fallback)

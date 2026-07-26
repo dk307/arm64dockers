@@ -16,7 +16,7 @@ env:
   IMAGE_NAME: ${{ github.repository_owner }}/llama-cpp-embed-nomic
 
 permissions:
-  contents: read
+  contents: write
   packages: write
 
 jobs:
@@ -185,3 +185,37 @@ jobs:
           echo "  ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest"
           echo ""
           echo "Check: https://github.com/${{ github.repository }}/pkgs/container/${{ github.event.repository.name }}"
+
+      - name: Update README with new tag
+        run: |
+          echo "=== Updating README.md ==="
+          TAG="${{ steps.tag.outputs.tag }}"
+          echo "New tag: $TAG"
+          echo ""
+
+          # Update the Tags column in the containers table row
+          sed -i "/llama-cpp-embed-nomic/s|\`[a-zA-Z0-9._-]*\`, \`latest\`|\`${TAG}\`, \`latest\`|" README.md
+
+          # Update pinned release tag references (b* pattern only — leaves :latest untouched)
+          sed -i "s|llama-cpp-embed-nomic:b[0-9]*|llama-cpp-embed-nomic:${TAG}|g" README.md
+          sed -i "s|LLAMA_CPP_TAG=b[0-9]*|LLAMA_CPP_TAG:${TAG}|g" README.md
+
+          echo "--- Updated README.md ---"
+          cat README.md
+
+      - name: Commit README update
+        run: |
+          echo "=== Committing README update ==="
+          TAG="${{ steps.tag.outputs.tag }}"
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          git add README.md
+          if git diff --cached --quiet; then
+            echo "No changes to commit"
+          else
+            git commit -m "docs: update README for llama-cpp-embed-nomic:$TAG"
+            git push origin main
+            echo "README updated and pushed"
+          fi
