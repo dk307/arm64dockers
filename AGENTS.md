@@ -150,7 +150,6 @@ The server supports selecting bundled models by name:
 ```
 POST /detect?model_type=yolo26n    → /models/yolo26n_opt.param
 POST /detect?model_type=yolo26m    → /models/yolo26m_opt.param (default)
-POST /detect?model=/full/path      → custom model path (backward compat)
 ```
 
 Available endpoints:
@@ -163,7 +162,7 @@ Available endpoints:
 #### CLI args
 
 ```
-yolo_server [--port N] [--model_type yolo26n|yolo26m] [--model /full/path.ncnn.param] [--threads N]
+yolo_server [--port N] [--model_type yolo26n|yolo26m] [--threads N]
 ```
 
 Default model: **yolo26m** (accurate).

@@ -131,7 +131,6 @@ podman run -d \
 | Param | Type | Default | Description |
 |-------|------|---------|-------------|
 | `model_type` | string | `yolo26m` | Bundled model: `yolo26n` or `yolo26m` |
-| `model` | string | — | Full path to `.ncnn.param` (overrides model_type) |
 | `conf` | float | `0.25` | Confidence threshold |
 | `classes` | string | all | Comma-separated COCO class names or IDs |
 

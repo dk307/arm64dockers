@@ -49,17 +49,10 @@ static const std::map<std::string,std::string> MODEL_TYPES={
     {"yolo26m","/models/yolo26m_opt.param"},
 };
 static std::string g_default_model_type="yolo26m";
-static std::string g_default_model_path="";
 
-static std::string resolve_model(const std::string& model_type,const std::string& model_path){
-    if(!model_path.empty()) return model_path;
-    if(!model_type.empty()){
-        auto it=MODEL_TYPES.find(model_type);
-        if(it!=MODEL_TYPES.end()) return it->second;
-        return "";
-    }
-    if(!g_default_model_path.empty()) return g_default_model_path;
-    auto it=MODEL_TYPES.find(g_default_model_type);
+static std::string resolve_model(const std::string& model_type){
+    std::string mt = model_type.empty() ? g_default_model_type : model_type;
+    auto it=MODEL_TYPES.find(mt);
     if(it!=MODEL_TYPES.end()) return it->second;
     return "";
 }
@@ -148,9 +141,8 @@ int main(int argc,char**argv){
     for(int i=1;i<argc;i++){ std::string a=argv[i];
         if(a=="--port"&&i+1<argc)port=atoi(argv[++i]);
         else if(a=="--model_type"&&i+1<argc) g_default_model_type=argv[++i];
-        else if(a=="--model"&&i+1<argc) g_default_model_path=argv[++i];
         else if(a=="--threads"&&i+1<argc)threads=atoi(argv[++i]);
-        else if(a=="-h"||a=="--help"){printf("usage: yolo_server [--port N] [--model_type yolo26n|yolo26m] [--model /full/path.ncnn.param] [--threads N]\n");return 0;}
+        else if(a=="-h"||a=="--help"){printf("usage: yolo_server [--port N] [--model_type yolo26n|yolo26m] [--threads N]\n");return 0;}
         else if(!a.empty()&&a[0]!='-')port=atoi(a.c_str());
     }
     g_threads=threads;
@@ -166,7 +158,6 @@ int main(int argc,char**argv){
         std::string j="{\"status\":\"ok\",\"gpus\":"+std::to_string(gpus)
             +",\"threads\":"+std::to_string(g_threads)
             +",\"default_model_type\":\""+g_default_model_type+"\","
-            +"\"default_model\":\""+resolve_model("","")+"\","
             +"\"models\":[";
         bool first=true;
         for(const auto& kv:MODEL_TYPES){
@@ -182,9 +173,8 @@ int main(int argc,char**argv){
     });
     svr.Post("/detect",[&](const httplib::Request&req,httplib::Response&res){
         std::string model_type = req.has_param("model_type")?req.get_param_value("model_type"):"";
-        std::string model_path = req.has_param("model")?req.get_param_value("model"):"";
-        std::string model = resolve_model(model_type,model_path);
-        if(model.empty()){res.status=400;res.set_content("{\"error\":\"unknown model_type: use 'yolo26n' or 'yolo26m', or provide ?model=/full/path.ncnn.param\"}","application/json");return;}
+        std::string model = resolve_model(model_type);
+        if(model.empty()){res.status=400;res.set_content("{\"error\":\"unknown model_type: use 'yolo26n' or 'yolo26m'\"}","application/json");return;}
         bool gpu=false;
 #if NCNN_VULKAN
         gpu = req.has_param("device")&&req.get_param_value("device")=="gpu"; if(gpu&&gpus<=0)gpu=false;
