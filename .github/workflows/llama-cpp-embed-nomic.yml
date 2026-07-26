@@ -103,13 +103,13 @@ jobs:
           
           echo "--- Starting container ---"
           docker run -d --name test -p 8080:8080 ${{ env.IMAGE_NAME }}:test
-          echo "Container started, waiting for server..."
+          echo "Container started, waiting for server and healthcheck..."
           sleep 30
           
-          echo "--- Test 1: Health check ---"
+          echo "--- Test 1: Health check endpoint ---"
           echo "GET http://localhost:8080/health"
           if ! curl -sf http://localhost:8080/health; then
-            echo "FAILED: Health check"
+            echo "FAILED: Health check endpoint"
             echo "--- Container logs ---"
             docker logs test
             exit 1
@@ -117,7 +117,30 @@ jobs:
           echo "PASSED"
           echo ""
           
-          echo "--- Test 2: Model info ---"
+          echo "--- Test 2: Docker HEALTHCHECK status ---"
+          # Wait up to 60s for Docker to mark container as healthy
+          HEALTH="starting"
+          for i in $(seq 1 12); do
+            HEALTH=$(docker inspect --format='{{.State.Health.Status}}' test 2>/dev/null || echo "unknown")
+            echo "  Attempt $i/12: health=$HEALTH"
+            if [ "$HEALTH" = "healthy" ]; then
+              break
+            fi
+            sleep 5
+          done
+          if [ "$HEALTH" != "healthy" ]; then
+            echo "FAILED: Container not healthy (status: $HEALTH)"
+            echo "--- Health log ---"
+            docker inspect --format='{{range .State.Health.Log}}{{.Output}}{{end}}' test 2>/dev/null
+            echo "--- Container logs ---"
+            docker logs test
+            exit 1
+          fi
+          echo "  Health status: $HEALTH"
+          echo "PASSED"
+          echo ""
+          
+          echo "--- Test 3: Model info ---"
           echo "GET http://localhost:8080/v1/models"
           RESPONSE=$(curl -sf http://localhost:8080/v1/models)
           echo "$RESPONSE" | jq .
@@ -128,7 +151,7 @@ jobs:
           echo "PASSED"
           echo ""
           
-          echo "--- Test 3: Embedding generation ---"
+          echo "--- Test 4: Embedding generation ---"
           echo "POST http://localhost:8080/v1/embeddings"
           echo "Input: 'hello world'"
           RESPONSE=$(curl -sf http://localhost:8080/v1/embeddings \
@@ -143,7 +166,7 @@ jobs:
           echo "PASSED"
           echo ""
           
-          echo "--- Test 4: Embedding dimensions ---"
+          echo "--- Test 5: Embedding dimensions ---"
           DIMS=$(echo "$RESPONSE" | jq '.data[0].embedding | length')
           echo "Expected: 768, Got: $DIMS"
           if [ "$DIMS" -ne 768 ]; then

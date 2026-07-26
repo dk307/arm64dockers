@@ -87,6 +87,17 @@ arm64devcontainer/
 llama.cpp puts `.so` files in `build/bin/` alongside executables, **not** in `build/lib*/`.
 `LD_LIBRARY_PATH` must include both `/llm/llama-cpp/bin` and `/llm/llama-cpp/lib`.
 
+#### Healthcheck
+
+Dockerfile includes a `HEALTHCHECK` (30s interval, 5s timeout, 30s start period, 3 retries):
+```
+CMD curl -sf http://localhost:8080/health || exit 1
+```
+
+CI smoke test verifies both the `/health` endpoint AND Docker's HEALTHCHECK status via `docker inspect`.
+
+**Podman users:** Use `--health-on-failure restart` for auto-restart on unhealthy containers (requires Podman v4.3+).
+
 #### Flags tested and rejected
 
 | Flag | Why rejected |

@@ -30,10 +30,24 @@ docker pull ghcr.io/dk307/llama-cpp-embed-nomic:b10107
 
 **Run:**
 ```bash
+# Docker
 docker run -d \
   --name embed \
   -p 8080:8080 \
   --ulimit memlock=-1:-1 \
+  ghcr.io/dk307/llama-cpp-embed-nomic:latest
+
+# Podman (with auto-restart on unhealthy)
+podman run -d \
+  --name embed \
+  -p 8080:8080 \
+  --ulimit memlock=-1:-1 \
+  --health-cmd "curl -sf http://localhost:8080/health || exit 1" \
+  --health-interval 30s \
+  --health-timeout 5s \
+  --health-retries 3 \
+  --health-start-period 30s \
+  --health-on-failure restart \
   ghcr.io/dk307/llama-cpp-embed-nomic:latest
 ```
 
@@ -56,6 +70,11 @@ curl -s http://localhost:8080/v1/embeddings \
 ```
 
 **Asymmetric retrieval:** Prefix documents with `search_document:`, queries with `search_query:` for best retrieval quality.
+
+**Healthcheck:** The image includes a Dockerfile `HEALTHCHECK` (30s interval, 5s timeout, 30s start period, 3 retries) that tests the `/health` endpoint. Check status with:
+```bash
+docker inspect --format='{{.State.Health.Status}}' embed
+```
 
 ---
 
