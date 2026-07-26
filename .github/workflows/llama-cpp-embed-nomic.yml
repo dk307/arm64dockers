@@ -1,0 +1,187 @@
+name: Build llama-cpp-embed-nomic
+
+on:
+  repository_dispatch:
+    types: [llama-cpp-release]
+
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'llama.cpp release tag (e.g. b5570)'
+        required: true
+        type: string
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository_owner }}/llama-cpp-embed-nomic
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build-test-push:
+    runs-on: ubuntu-24.04-arm  # Native ARM64 — no QEMU needed
+    steps:
+      - name: Resolve tag
+        id: tag
+        run: |
+          echo "=== Tag resolution ==="
+          echo "Trigger: ${{ github.event_name }}"
+          echo "Repository: ${{ github.repository }}"
+          echo ""
+          
+          TAG="${{ github.event.client_payload.tag || github.event.inputs.tag }}"
+          
+          if [ -z "$TAG" ]; then
+            echo "ERROR: No tag provided"
+            echo "Expected: client_payload.tag or inputs.tag"
+            exit 1
+          fi
+          
+          if [[ ! "$TAG" =~ ^b[0-9]+$ ]]; then
+            echo "ERROR: Invalid tag format '$TAG'"
+            echo "Expected format: b followed by digits (e.g. b5570)"
+            exit 1
+          fi
+          
+          echo "Resolved tag: $TAG"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo ""
+
+      - uses: actions/checkout@v4
+        name: Checkout repository
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Log build configuration
+        run: |
+          echo "=== Build configuration ==="
+          echo "Registry: ${{ env.REGISTRY }}"
+          echo "Image: ${{ env.IMAGE_NAME }}"
+          echo "Tag: ${{ steps.tag.outputs.tag }}"
+          echo "Runner: ubuntu-24.04-arm (native ARM64)"
+          echo "Actor: ${{ github.actor }}"
+          echo "Repository: ${{ github.repository }}"
+          echo ""
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=raw,value=${{ steps.tag.outputs.tag }}
+            type=raw,value=latest
+
+      - name: Build image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./llama-cpp
+          push: false
+          load: true
+          tags: ${{ env.IMAGE_NAME }}:test
+          build-args: |
+            LLAMA_CPP_TAG=${{ steps.tag.outputs.tag }}
+
+      - name: Smoke test
+        run: |
+          echo "=== Smoke tests ==="
+          echo "Image: ${{ env.IMAGE_NAME }}:test"
+          echo ""
+          
+          echo "--- Installing test dependencies ---"
+          sudo apt-get update && sudo apt-get install -y jq
+          
+          echo "--- Starting container ---"
+          podman run -d --name test -p 8080:8080 ${{ env.IMAGE_NAME }}:test
+          echo "Container started, waiting for server..."
+          sleep 30
+          
+          echo "--- Test 1: Health check ---"
+          echo "GET http://localhost:8080/health"
+          if ! curl -sf http://localhost:8080/health; then
+            echo "FAILED: Health check"
+            echo "--- Container logs ---"
+            podman logs test
+            exit 1
+          fi
+          echo "PASSED"
+          echo ""
+          
+          echo "--- Test 2: Model info ---"
+          echo "GET http://localhost:8080/v1/models"
+          RESPONSE=$(curl -sf http://localhost:8080/v1/models)
+          echo "$RESPONSE" | jq .
+          if ! echo "$RESPONSE" | grep -q "nomic-embed-text"; then
+            echo "FAILED: Model not found"
+            exit 1
+          fi
+          echo "PASSED"
+          echo ""
+          
+          echo "--- Test 3: Embedding generation ---"
+          echo "POST http://localhost:8080/v1/embeddings"
+          echo "Input: 'hello world'"
+          RESPONSE=$(curl -sf http://localhost:8080/v1/embeddings \
+            -d '{"input":"hello world","model":"nomic-embed-text"}')
+          echo "Response preview: $(echo "$RESPONSE" | head -c 200)..."
+          if ! echo "$RESPONSE" | grep -q '"embedding"'; then
+            echo "FAILED: No embedding in response"
+            echo "--- Container logs ---"
+            podman logs test
+            exit 1
+          fi
+          echo "PASSED"
+          echo ""
+          
+          echo "--- Test 4: Embedding dimensions ---"
+          DIMS=$(echo "$RESPONSE" | jq '.data[0].embedding | length')
+          echo "Expected: 768, Got: $DIMS"
+          if [ "$DIMS" -ne 768 ]; then
+            echo "FAILED: Wrong dimensions"
+            exit 1
+          fi
+          echo "PASSED"
+          echo ""
+          
+          echo "=== All tests passed ==="
+          podman stop test && podman rm test
+          echo "Container cleaned up"
+
+      - name: Push to GHCR
+        run: |
+          echo "=== Pushing image ==="
+          echo "Tags:"
+          echo "${{ steps.meta.outputs.tags }}"
+          echo ""
+          echo "Labels:"
+          echo "${{ steps.meta.outputs.labels }}" | head -5
+          echo "..."
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: ./llama-cpp
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            LLAMA_CPP_TAG=${{ steps.tag.outputs.tag }}
+
+      - name: Verify push
+        if: always()
+        run: |
+          echo "=== Verify published image ==="
+          echo "Expected tags:"
+          echo "  ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.tag.outputs.tag }}"
+          echo "  ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest"
+          echo ""
+          echo "Check: https://github.com/${{ github.repository }}/pkgs/container/${{ github.event.repository.name }}"
