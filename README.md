@@ -212,7 +212,7 @@ gh workflow run yolo-rest.yml -f ncnn_tag=20260526
 ```bash
 # llama-cpp — requires the upstream release tag as build arg
 docker build \
-  --build-arg LLAMA_CPP_TAG=b10107 \
+  --build-arg LLAMA_CPP_TAG:b10107 \
   -t llama-cpp-embed-nomic:local \
   ./llama-cpp
 
