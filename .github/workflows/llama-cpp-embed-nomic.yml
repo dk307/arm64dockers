@@ -73,15 +73,6 @@ jobs:
           echo "Repository: ${{ github.repository }}"
           echo ""
 
-      - name: Extract metadata
-        id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
-          tags: |
-            type=raw,value=${{ steps.tag.outputs.tag }}
-            type=raw,value=latest
-
       - name: Build image
         uses: docker/build-push-action@v6
         with:
@@ -180,34 +171,15 @@ jobs:
           docker stop test && docker rm test
           echo "Container cleaned up"
 
-      - name: Push to GHCR
+      # Use docker push (not build-push-action) to produce Docker v2 manifest.
+      # OCI manifests from Buildx cause podman to drop the HEALTHCHECK metadata
+      # (podman does not parse HEALTHCHECK from OCI image config — see containers/podman#21127)
+      - name: Push image
         run: |
-          echo "=== Pushing image ==="
-          echo "Tags:"
-          echo "${{ steps.meta.outputs.tags }}"
-          echo ""
-          echo "Labels:"
-          echo "${{ steps.meta.outputs.labels }}" | head -5
-          echo "..."
-
-      - uses: docker/build-push-action@v6
-        with:
-          context: ./llama-cpp
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          build-args: |
-            LLAMA_CPP_TAG=${{ steps.tag.outputs.tag }}
-
-      - name: Verify push
-        if: always()
-        run: |
-          echo "=== Verify published image ==="
-          echo "Expected tags:"
-          echo "  ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.tag.outputs.tag }}"
-          echo "  ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest"
-          echo ""
-          echo "Check: https://github.com/${{ github.repository }}/pkgs/container/${{ github.event.repository.name }}"
+          docker tag ${{ env.IMAGE_NAME }}:test ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.tag.outputs.tag }}
+          docker tag ${{ env.IMAGE_NAME }}:test ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+          docker push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.tag.outputs.tag }}
+          docker push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
 
       - name: Update README with new tag
         run: |
