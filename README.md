@@ -31,11 +31,13 @@ docker pull ghcr.io/dk307/llama-cpp-embed-nomic:b10107
 
 **Run:**
 ```bash
-# Docker
+# Docker (with log rotation)
 docker run -d \
   --name embed \
   -p 8080:8080 \
   --ulimit memlock=-1:-1 \
+  --log-opt max-size=10m \
+  --log-opt max-file=3 \
   ghcr.io/dk307/llama-cpp-embed-nomic:latest
 
 # Podman (with auto-restart on unhealthy)
@@ -77,6 +79,18 @@ curl -s http://localhost:8080/v1/embeddings \
 docker inspect --format='{{.State.Health.Status}}' embed
 ```
 
+**Log rotation:** Container logs (stderr) grow unbounded by default. Add log driver options:
+```bash
+# Per container
+docker run -d ... --log-opt max-size=10m --log-opt max-file=3 ...
+
+# Global default (/etc/docker/daemon.json)
+{
+  "log-driver": "json-file",
+  "log-opts": { "max-size": "10m", "max-file": "3" }
+}
+```
+
 ---
 
 ### yolo-rest
@@ -94,16 +108,20 @@ docker pull ghcr.io/dk307/yolo-rest:ncnn-20260526
 
 **Run:**
 ```bash
-# Docker — default model is yolo26m
+# Docker (with log rotation) — default model is yolo26m
 docker run -d \
   --name yolo \
   -p 18080:18080 \
+  --log-opt max-size=10m \
+  --log-opt max-file=3 \
   ghcr.io/dk307/yolo-rest:latest
 
 # Docker — use yolo26n (fast)
 docker run -d \
   --name yolo-fast \
   -p 18080:18080 \
+  --log-opt max-size=10m \
+  --log-opt max-file=3 \
   ghcr.io/dk307/yolo-rest:latest \
   --model_type yolo26n
 
