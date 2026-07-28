@@ -69,6 +69,11 @@ COPY --from=model /models/ /llm/models/
 
 ENV LD_LIBRARY_PATH=/llm/llama-cpp/lib:/llm/llama-cpp/bin
 
+LABEL org.opencontainers.image.title="llama-cpp-embed-nomic" \
+      org.opencontainers.image.description="nomic-embed-text v1.5 embedding server via llama.cpp — ARM64 Cortex-A78C optimised" \
+      org.opencontainers.image.source="https://github.com/dk307/arm64dockers" \
+      org.opencontainers.image.licenses="MIT"
+
 EXPOSE 8080
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \

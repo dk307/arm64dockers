@@ -73,6 +73,11 @@ ADD https://github.com/dk307/arm64dockers/releases/download/${MODELS_TAG}/yolo26
 ADD https://github.com/dk307/arm64dockers/releases/download/${MODELS_TAG}/yolo26m_opt.param /models/
 ADD https://github.com/dk307/arm64dockers/releases/download/${MODELS_TAG}/yolo26m_opt.bin /models/
 
+LABEL org.opencontainers.image.title="yolo-rest" \
+      org.opencontainers.image.description="YOLO object-detection REST server via ncnn — yolo26n + yolo26m models, ARM64 optimised" \
+      org.opencontainers.image.source="https://github.com/dk307/arm64dockers" \
+      org.opencontainers.image.licenses="MIT"
+
 EXPOSE 18080
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
