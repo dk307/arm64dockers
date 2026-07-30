@@ -10,7 +10,7 @@ env:
   IMAGE_NAME: yolo-rest
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   check-ncnn:

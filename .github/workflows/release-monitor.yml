@@ -10,7 +10,7 @@ env:
   IMAGE_NAME: llama-cpp-embed-nomic
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   check-llama-cpp:
