@@ -11,7 +11,7 @@ ARM64-only Docker containers built and published to GHCR. Single repo, automated
 
 | Container | Upstream | Description | Tags |
 |-----------|----------|-------------|------|
-| [`llama-cpp-embed-nomic`](#llama-cpp-embed-nomic) | [ggml-org/llama.cpp](https://github.com/ggml-org/llama.cpp) | nomic-embed-text embedding server | `b10107`, `latest` |
+| [`llama-cpp-embed-nomic`](#llama-cpp-embed-nomic) | [ggml-org/llama.cpp](https://github.com/ggml-org/llama.cpp) | nomic-embed-text embedding server | `b10186`, `latest` |
 | [`yolo-rest`](#yolo-rest) | [Tencent/ncnn](https://github.com/Tencent/ncnn) | YOLO object-detection REST server | `ncnn-20260526`, `latest` |
 
 ---
@@ -26,7 +26,7 @@ Embedding server running [nomic-embed-text v1.5](https://huggingface.co/nomic-ai
 docker pull ghcr.io/dk307/llama-cpp-embed-nomic:latest
 
 # Pinned to specific release
-docker pull ghcr.io/dk307/llama-cpp-embed-nomic:b10107
+docker pull ghcr.io/dk307/llama-cpp-embed-nomic:b10186
 ```
 
 **Run:**
