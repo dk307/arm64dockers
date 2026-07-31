@@ -77,6 +77,7 @@ ENV PKG_CONFIG_PATH=/usr/local/lib/pkgconfig:${PKG_CONFIG_PATH}
 
 RUN ./configure \
     --prefix=/usr/local \
+    --cc=clang --cxx=clang++ \
     --enable-gpl \
     --enable-nonfree \
     --enable-version3 \
