@@ -132,7 +132,7 @@ jobs:
       - name: Start container
         if: steps.check.outputs.skip != 'true'
         run: |
-          docker run -d --name ffmpeg-test ${{ env.IMAGE_NAME }}:test
+          docker run -d --name ffmpeg-test ${{ env.IMAGE_NAME }}:test sleep infinity
           echo "Container started"
 
       - name: Test 1 — ffmpeg binary
