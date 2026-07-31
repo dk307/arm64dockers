@@ -20,7 +20,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libx264-dev libx265-dev libvpx-dev \
     libfdk-aac-dev libopus-dev \
     libjpeg-dev \
-    libvulkan-dev libspirv-dev \
+    libvulkan-dev \
     libssl-dev \
     && rm -rf /var/lib/apt/lists/*
 
