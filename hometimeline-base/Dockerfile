@@ -78,6 +78,7 @@ ENV PKG_CONFIG_PATH=/usr/local/lib/pkgconfig:${PKG_CONFIG_PATH}
 RUN ./configure \
     --prefix=/usr/local \
     --enable-gpl \
+    --enable-nonfree \
     --enable-version3 \
     --enable-libx264 \
     --enable-libx265 \

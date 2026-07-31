@@ -696,7 +696,7 @@ BUILD_DEC=ON
 ```
 ./configure \
   --prefix=/usr/local \
-  --enable-gpl --enable-version3 \
+  --enable-gpl --enable-nonfree --enable-version3 \
   --enable-libx264 --enable-libx265 --enable-libvpx \
   --enable-libsvtav1 --enable-libfdk-aac --enable-libopus \
   --enable-vulkan \
