@@ -689,6 +689,9 @@ BUILD_APPS=OFF
 BUILD_DEC=ON
 ```
 
+**SVT-AV1 source:** https://gitlab.com/AOMediaCodec/SVT-AV1.git (not GitHub — GitHub mirror has no tags)
+**SVT-AV1 default version:** v4.2.0
+
 **FFmpeg:**
 ```
 ./configure \

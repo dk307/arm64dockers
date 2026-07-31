@@ -4,7 +4,7 @@
 # =============================================================================
 
 ARG FFMPEG_VERSION=8.1.2
-ARG SVTAV1_VERSION=3.0.2
+ARG SVTAV1_VERSION=4.2.0
 
 # ---------------------------------------------------------------------------
 # Stage 1: Build dependencies
@@ -13,7 +13,9 @@ FROM --platform=linux/arm64 ubuntu:26.04 AS deps
 
 ENV DEBIAN_FRONTEND=noninteractive
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN apt-get update && apt-get install -y --no-install-recommends software-properties-common \
+    && add-apt-repository -y multiverse \
+    && apt-get update && apt-get install -y --no-install-recommends \
     clang lld llvm libomp-dev \
     cmake make git autoconf automake libtool pkg-config \
     nasm yasm curl ca-certificates \
@@ -35,7 +37,7 @@ ARG CFLAGS="-O3 -march=armv8.2-a+dotprod+fp16+fp16fml+rcpc -mtune=cortex-a78c \
   -fno-trapping-math -freciprocal-math -fno-plt -flto=thin"
 
 RUN git clone --depth 1 --branch v${SVTAV1_VERSION} \
-    https://github.com/AOMediaCodec/SVT-AV1.git /src/svtav1
+    https://gitlab.com/AOMediaCodec/SVT-AV1.git /src/svtav1
 
 WORKDIR /src/svtav1
 
