@@ -11,7 +11,7 @@ ARM64-only Docker containers built and published to GHCR. Single repo, automated
 
 | Container | Upstream | Description | Tags |
 |-----------|----------|-------------|------|
-| [`llama-cpp-embed-nomic`](#llama-cpp-embed-nomic) | [ggml-org/llama.cpp](https://github.com/ggml-org/llama.cpp) | nomic-embed-text embedding server | `b10186`, `latest` |
+| [`llama-cpp-embed-nomic`](#llama-cpp-embed-nomic) | [ggml-org/llama.cpp](https://github.com/ggml-org/llama.cpp) | nomic-embed-text embedding server | `b10199`, `latest` |
 | [`yolo-rest`](#yolo-rest) | [Tencent/ncnn](https://github.com/Tencent/ncnn) | YOLO object-detection REST server | `ncnn-20260526`, `latest` |
 | [`hometimeline-base`](#hometimeline-base) | [FFmpeg/FFmpeg](https://github.com/FFmpeg/FFmpeg) | FFmpeg optimised for ARM64 Cortex-A78C | `ffmpeg-8.1.2`, `latest` |
 
@@ -27,7 +27,7 @@ Embedding server running [nomic-embed-text v1.5](https://huggingface.co/nomic-ai
 docker pull ghcr.io/dk307/llama-cpp-embed-nomic:latest
 
 # Pinned to specific release
-docker pull ghcr.io/dk307/llama-cpp-embed-nomic:b10186
+docker pull ghcr.io/dk307/llama-cpp-embed-nomic:b10199
 ```
 
 **Run:**
@@ -271,7 +271,7 @@ gh workflow run hometimeline-base.yml -f ffmpeg_version=8.1.2
 ```bash
 # llama-cpp — requires the upstream release tag as build arg
 docker build \
-  --build-arg LLAMA_CPP_TAG=b10107 \
+  --build-arg LLAMA_CPP_TAG:b10199 \
   -t llama-cpp-embed-nomic:local \
   ./llama-cpp
 
