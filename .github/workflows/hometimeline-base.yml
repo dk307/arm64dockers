@@ -186,8 +186,9 @@ jobs:
         if: steps.check.outputs.skip != 'true'
         run: |
           echo "=== Test 4: Required protocols ==="
-          PROTOCOLS=$(docker exec ffmpeg-test ffmpeg -protocols 2>/dev/null)
-          echo "$PROTOCOLS" | grep -E "rtsp|rtmp|hls|http" | head -10
+          PROTOCOLS=$(docker exec ffmpeg-test ffmpeg -protocols 2>&1)
+          echo "All protocols:"
+          echo "$PROTOCOLS"
 
           for PROTO in rtsp rtmp hls http; do
             if ! echo "$PROTOCOLS" | grep -q "$PROTO"; then
