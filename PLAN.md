@@ -699,7 +699,7 @@ BUILD_DEC=ON
   --enable-gpl --enable-version3 \
   --enable-libx264 --enable-libx265 --enable-libvpx \
   --enable-libsvtav1 --enable-libfdk-aac --enable-libopus \
-  --enable-libjpeg --enable-vulkan \
+  --enable-vulkan \
   --enable-openssl \
   --enable-protocol=file --enable-protocol=pipe \
   --enable-protocol=tcp --enable-protocol=rtsp \

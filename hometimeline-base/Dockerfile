@@ -85,7 +85,6 @@ RUN ./configure \
     --enable-libsvtav1 \
     --enable-libfdk-aac \
     --enable-libopus \
-    --enable-libjpeg \
     --enable-vulkan \
     --enable-openssl \
     --enable-protocol=file \
