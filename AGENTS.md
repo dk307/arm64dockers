@@ -31,17 +31,20 @@ arm64devcontainer/
 │       ├── release-monitor.yml          # Daily cron: checks llama.cpp releases
 │       ├── llama-cpp-embed-nomic.yml    # Build, test, push, update README
 │       ├── ncnn-release-monitor.yml     # Daily cron: checks ncnn releases
-│       └── yolo-rest.yml               # Build, test, push, update README
+│       ├── yolo-rest.yml               # Build, test, push, update README
+│       └── hometimeline-base.yml       # Weekly cron: FFmpeg base image
 ├── llama-cpp/
 │   └── Dockerfile                       # Multi-stage: build → model → runtime
-└── yolo-rest/
-    ├── Dockerfile                       # Multi-stage: ncnn build → server → models
-    └── server/
-        ├── server.cpp                   # REST server with model_type API
-        ├── CMakeLists.txt               # Docker-compatible CMake build
-        └── third_party/
-            ├── httplib.h                # cpp-httplib (header-only)
-            └── stb_image.h              # stb image decoder (header-only)
+├── yolo-rest/
+│   ├── Dockerfile                       # Multi-stage: ncnn build → server → models
+│   └── server/
+│       ├── server.cpp                   # REST server with model_type API
+│       ├── CMakeLists.txt               # Docker-compatible CMake build
+│       └── third_party/
+│           ├── httplib.h                # cpp-httplib (header-only)
+│           └── stb_image.h              # stb image decoder (header-only)
+└── hometimeline-base/
+    └── Dockerfile                       # Multi-stage: SVT-AV1 → FFmpeg → runtime
 ```
 
 ---
@@ -176,6 +179,69 @@ CMD curl -sf http://localhost:18080/health || exit 1
 
 CI smoke tests verify: health endpoint, HEALTHCHECK status, /models listing, detection with yolo26n, detection with yolo26m, and default model behavior.
 
+### hometimeline-base (active)
+
+**Image:** `ghcr.io/dk307/hometimeline-base`
+**Purpose:** FFmpeg optimised for Snapdragon 8cx Gen 3 — base layer for downstream video containers
+**Codecs:** libx264, libx265, libvpx, libsvtav1, libfdk-aac, libopus, libjpeg-turbo, Vulkan
+**No EXPOSE, no ENTRYPOINT** — pure base layer for `COPY --from`
+
+#### Key build facts
+
+- **Compiler:** Clang 21+ (same as other containers)
+- **FFmpeg:** Release tag `n8.1.2` — tags only, no GitHub Releases
+- **SVT-AV1:** Built from source (not in Ubuntu repos) — tracked separately
+- **Base OS:** Ubuntu 26.04 LTS
+- **Vulkan:** Enabled (experimental, Adreno 690)
+- **Weekly cron** (Monday 02:00 UTC) — FFmpeg releases ~monthly, daily check unnecessary
+
+#### CFLAGS (exact — identical to llama-cpp and yolo-rest)
+
+```
+-O3 -march=armv8.2-a+dotprod+fp16+fp16fml+rcpc -mtune=cortex-a78c
+-fno-math-errno -fassociative-math -fno-signed-zeros
+-fno-trapping-math -freciprocal-math -fno-plt -flto=thin
+```
+
+#### Codecs
+
+| Type | Codec | Library |
+|------|-------|---------|
+| Video | H.264/AVC | libx264 |
+| Video | H.265/HEVC | libx265 |
+| Video | VP8/VP9 | libvpx |
+| Video | AV1 | libsvtav1 (built from source) |
+| Video | MJPEG | libjpeg-turbo |
+| Audio | AAC | libfdk-aac |
+| Audio | Opus | libopus |
+
+#### Protocols
+
+file, pipe, tcp, rtsp, rtmp, hls, https
+
+#### Downstream consumption pattern
+
+```dockerfile
+FROM ghcr.io/dk307/hometimeline-base:latest AS ffmpeg
+COPY --from=ffmpeg /usr/local/bin/ffmpeg /usr/local/bin/ffmpeg
+COPY --from=ffmpeg /usr/local/bin/ffprobe /usr/local/bin/ffprobe
+COPY --from=ffmpeg /usr/local/lib/ /usr/local/lib/
+```
+
+#### Tag policy
+
+| Container | Tag | Behavior |
+|-----------|-----|----------|
+| hometimeline-base | `:ffmpeg-NNN.N.N` | Pinned FFmpeg version (overwrites on rebuild) |
+| hometimeline-base | `:latest` | Most recent build |
+
+#### Notes
+
+- FFmpeg has **no GitHub Releases** — only tags (`n*` format). Weekly cron fetches latest `n*` tag from API.
+- **SVT-AV1** is built from source because it's not in Ubuntu repos.
+- **No EXPOSE, no ENTRYPOINT** — this is a base layer, not a runnable service.
+- Downstream images use `COPY --from` to extract binaries and shared libraries.
+
 ---
 
 ## CI/CD Workflows
@@ -214,6 +280,17 @@ CI smoke tests verify: health endpoint, HEALTHCHECK status, /models listing, det
 - **After push:** Auto-updates README.md tags column and commits to main
 - **Permissions:** `contents: write`, `packages: write`
 
+### hometimeline-base.yml
+
+- **Triggers:** Weekly cron (Monday 02:00 UTC) + push to Dockerfile + `workflow_dispatch` (manual with ffmpeg_version input)
+- **Runner:** `ubuntu-24.04-arm` (native ARM64)
+- **Pipeline:** Resolve version → Check GHCR → Build → Smoke test → Push → Update README → Commit
+- **Tag validation:** version must match `^[0-9]+\.[0-9]+(\.[0-9]+)?$`
+- **Smoke tests:** ffmpeg binary, ffprobe binary, required codecs (h264, hevc, vp9, av1, aac, mjpeg), required protocols (rtsp, rtmp, hls, http), ARM64 build config, GPL/libx264 verification
+- **After push:** Auto-updates README.md tags column and commits to main
+- **Permissions:** `contents: write`, `packages: write`
+- **Note:** FFmpeg has no GitHub Releases — only tags (`n*` format). Weekly cron fetches latest `n*` tag from API.
+
 ### Tag policy
 
 | Container | Tag | Behavior |
@@ -222,6 +299,8 @@ CI smoke tests verify: health endpoint, HEALTHCHECK status, /models listing, det
 | llama-cpp-embed-nomic | `:latest` | Most recent build |
 | yolo-rest | `:ncnn-NNNNNN` | Specific ncnn version (overwrites on rebuild) |
 | yolo-rest | `:latest` | Most recent build |
+| hometimeline-base | `:ffmpeg-NNN.N.N` | Pinned FFmpeg version (overwrites on rebuild) |
+| hometimeline-base | `:latest` | Most recent build |
 
 ---
 
@@ -230,6 +309,7 @@ CI smoke tests verify: health endpoint, HEALTHCHECK status, /models listing, det
 - **PLAN.md** is the source of truth for build flags, CMake configuration, and runtime parameters
 - **llama-cpp/Dockerfile** is the actual build definition — keep in sync with PLAN.md
 - **yolo-rest/Dockerfile** is the actual build definition for yolo-rest
+- **hometimeline-base/Dockerfile** is the actual build definition for hometimeline-base
 - **README.md** is auto-updated by CI — manual edits are overwritten on next build. Edit the workflow, not the README, to change tag presentation.
 - **AGENTS.md** (this file) — update when adding containers or changing workflows
 
@@ -244,12 +324,16 @@ gh workflow run llama-cpp-embed-nomic.yml --ref main -f tag=b10107
 
 # yolo-rest
 gh workflow run yolo-rest.yml --ref main -f ncnn_tag=20260526
+
+# hometimeline-base
+gh workflow run hometimeline-base.yml --ref main -f ffmpeg_version=8.1.2
 ```
 
 ### Check build status
 ```bash
 gh run list --workflow=llama-cpp-embed-nomic.yml --limit=5
 gh run list --workflow=yolo-rest.yml --limit=5
+gh run list --workflow=hometimeline-base.yml --limit=5
 gh run view <run-id> --log
 ```
 
@@ -260,6 +344,9 @@ docker build --build-arg LLAMA_CPP_TAG=b10107 -t llama-cpp-embed-nomic:local ./l
 
 # yolo-rest
 docker build --build-arg NCNN_TAG=20260526 --build-arg MODELS_TAG=yolo-models-v1 -t yolo-rest:local ./yolo-rest
+
+# hometimeline-base
+docker build --build-arg FFMPEG_VERSION=8.1.2 -t hometimeline-base:local ./hometimeline-base
 ```
 
 ### Run locally
@@ -275,6 +362,9 @@ docker run -d --name yolo -p 18080:18080 \
 # yolo-rest (fast: yolo26n)
 docker run -d --name yolo-fast -p 18080:18080 \
   ghcr.io/dk307/yolo-rest:latest --model_type yolo26n
+
+# hometimeline-base (test only — no ENTRYPOINT)
+docker run --rm ghcr.io/dk307/hometimeline-base:latest ffmpeg -version
 ```
 
 ### Host-side optimizations

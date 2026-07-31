@@ -1,0 +1,257 @@
+name: Build hometimeline-base
+
+on:
+  schedule:
+    - cron: '0 2 * * 1'  # Weekly Monday 02:00 UTC
+
+  push:
+    paths:
+      - 'hometimeline-base/Dockerfile'
+      - '.github/workflows/hometimeline-base.yml'
+    branches: [main]
+
+  workflow_dispatch:
+    inputs:
+      ffmpeg_version:
+        description: 'FFmpeg version (e.g. 8.1.2)'
+        required: false
+        type: string
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository_owner }}/hometimeline-base
+  FFMPEG_DEFAULT: '8.1.2'
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  build-test-push:
+    runs-on: ubuntu-24.04-arm  # Native ARM64 — no QEMU needed
+    steps:
+      - name: Resolve version
+        id: version
+        run: |
+          echo "=== Version resolution ==="
+          echo "Trigger: ${{ github.event_name }}"
+
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ -n "${{ inputs.ffmpeg_version }}" ]; then
+            VERSION="${{ inputs.ffmpeg_version }}"
+            echo "From manual input: $VERSION"
+          else
+            # Fetch latest n* tag from GitHub API (FFmpeg has no releases, only tags)
+            echo "Fetching latest FFmpeg tag from GitHub API..."
+            RESPONSE=$(curl -sf "https://api.github.com/repos/FFmpeg/FFmpeg/tags?per_page=20")
+            if [ $? -ne 0 ]; then
+              echo "ERROR: Failed to fetch tags from GitHub API"
+              exit 1
+            fi
+
+            # Extract n* tags, strip the 'n' prefix, sort by version, take latest
+            VERSION=$(echo "$RESPONSE" | jq -r '.[].name' | grep -E '^n[0-9]+\.[0-9]+(\.[0-9]+)?$' \
+              | sed 's/^n//' | sort -V | tail -1)
+
+            if [ -z "$VERSION" ]; then
+              echo "ERROR: Could not find any FFmpeg release tags"
+              exit 1
+            fi
+            echo "Latest upstream: n$VERSION"
+          fi
+
+          # Validate version format (digits.digits or digits.digits.digits)
+          if ! echo "$VERSION" | grep -qE '^[0-9]+\.[0-9]+(\.[0-9]+)?$'; then
+            echo "ERROR: Invalid version format: $VERSION"
+            exit 1
+          fi
+
+          echo "ffmpeg_version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Resolved FFmpeg version: $VERSION"
+          echo ""
+
+      - name: Check if already built
+        id: check
+        run: |
+          VERSION="${{ steps.version.outputs.ffmpeg_version }}"
+          IMAGE="${{ github.repository_owner }}/hometimeline-base"
+          TAG="ffmpeg-$VERSION"
+
+          echo "=== Checking GHCR for existing tag ==="
+          echo "Image: $IMAGE"
+          echo "Tag: $TAG"
+
+          TAGS=$(curl -sf "https://ghcr.io/v2/${IMAGE}/tags/list" 2>/dev/null || echo "")
+
+          if echo "$TAGS" | grep -q "\"${TAG}\""; then
+            echo "Tag $TAG already exists in GHCR"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "Tag $TAG not found — build needed"
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/checkout@v4
+        name: Checkout repository
+        if: steps.check.outputs.skip != 'true'
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+        if: steps.check.outputs.skip != 'true'
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        if: steps.check.outputs.skip != 'true'
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Log build configuration
+        if: steps.check.outputs.skip != 'true'
+        run: |
+          echo "=== Build configuration ==="
+          echo "Registry: ${{ env.REGISTRY }}"
+          echo "Image: ${{ env.IMAGE_NAME }}"
+          echo "FFmpeg version: ${{ steps.version.outputs.ffmpeg_version }}"
+          echo "Runner: ubuntu-24.04-arm (native ARM64)"
+          echo ""
+
+      - name: Build image
+        if: steps.check.outputs.skip != 'true'
+        uses: docker/build-push-action@v6
+        with:
+          context: ./hometimeline-base
+          push: false
+          load: true
+          tags: ${{ env.IMAGE_NAME }}:test
+          build-args: |
+            FFMPEG_VERSION=${{ steps.version.outputs.ffmpeg_version }}
+
+      # ── Smoke tests ──────────────────────────────────────────
+
+      - name: Start container
+        if: steps.check.outputs.skip != 'true'
+        run: |
+          docker run -d --name ffmpeg-test ${{ env.IMAGE_NAME }}:test
+          echo "Container started"
+
+      - name: Test 1 — ffmpeg binary
+        if: steps.check.outputs.skip != 'true'
+        run: |
+          echo "=== Test 1: ffmpeg binary ==="
+          VERSION="${{ steps.version.outputs.ffmpeg_version }}"
+          OUTPUT=$(docker exec ffmpeg-test ffmpeg -version 2>&1)
+          echo "$OUTPUT" | head -5
+
+          if ! echo "$OUTPUT" | grep -q "ffmpeg version"; then
+            echo "FAIL: ffmpeg binary not working"
+            exit 1
+          fi
+          if ! echo "$OUTPUT" | grep -q "libx264"; then
+            echo "FAIL: libx264 not enabled"
+            exit 1
+          fi
+          echo "PASS: ffmpeg binary OK, libx264 enabled"
+
+      - name: Test 2 — ffprobe binary
+        if: steps.check.outputs.skip != 'true'
+        run: |
+          echo "=== Test 2: ffprobe binary ==="
+          OUTPUT=$(docker exec ffmpeg-test ffprobe -version 2>&1)
+          echo "$OUTPUT" | head -3
+
+          if ! echo "$OUTPUT" | grep -q "ffprobe version"; then
+            echo "FAIL: ffprobe binary not working"
+            exit 1
+          fi
+          echo "PASS: ffprobe binary OK"
+
+      - name: Test 3 — Required codecs
+        if: steps.check.outputs.skip != 'true'
+        run: |
+          echo "=== Test 3: Required codecs ==="
+          CODECS=$(docker exec ffmpeg-test ffmpeg -codecs 2>/dev/null)
+          echo "$CODECS" | grep -E "libx264|libx265|libvpx|libsvtav1|libfdk_aac|mjpeg" | head -20
+
+          for CODEC in h264 hevc vp9 av1 aac mjpeg; do
+            if ! echo "$CODECS" | grep -q "$CODEC"; then
+              echo "FAIL: codec $CODEC not found"
+              exit 1
+            fi
+            echo "  PASS: $CODEC"
+          done
+          echo "PASS: All required codecs present"
+
+      - name: Test 4 — Required protocols
+        if: steps.check.outputs.skip != 'true'
+        run: |
+          echo "=== Test 4: Required protocols ==="
+          PROTOCOLS=$(docker exec ffmpeg-test ffmpeg -protocols 2>/dev/null)
+          echo "$PROTOCOLS" | grep -E "rtsp|rtmp|hls|http" | head -10
+
+          for PROTO in rtsp rtmp hls http; do
+            if ! echo "$PROTOCOLS" | grep -q "$PROTO"; then
+              echo "FAIL: protocol $PROTO not found"
+              exit 1
+            fi
+            echo "  PASS: $PROTO"
+          done
+          echo "PASS: All required protocols present"
+
+      - name: Test 5 — ARM64 build verification
+        if: steps.check.outputs.skip != 'true'
+        run: |
+          echo "=== Test 5: ARM64 build config ==="
+          CONFIG=$(docker exec ffmpeg-test ffmpeg -buildconf 2>&1)
+          echo "$CONFIG" | grep -i "arm\|aarch\|neon" | head -5
+
+          if ! echo "$CONFIG" | grep -q "enable-gpl"; then
+            echo "FAIL: GPL not enabled"
+            exit 1
+          fi
+          echo "PASS: GPL enabled"
+          if ! echo "$CONFIG" | grep -q "enable-libx264"; then
+            echo "FAIL: libx264 not in build config"
+            exit 1
+          fi
+          echo "PASS: libx264 in build config"
+
+      - name: Stop container
+        if: always() && steps.check.outputs.skip != 'true'
+        run: docker rm -f ffmpeg-test 2>/dev/null || true
+
+      # ── Push to GHCR ─────────────────────────────────────────
+
+      - name: Push image
+        if: steps.check.outputs.skip != 'true'
+        run: |
+          VERSION="${{ steps.version.outputs.ffmpeg_version }}"
+          docker tag ${{ env.IMAGE_NAME }}:test ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:ffmpeg-${VERSION}
+          docker tag ${{ env.IMAGE_NAME }}:test ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+          docker push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:ffmpeg-${VERSION}
+          docker push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+
+      # ── Update README ────────────────────────────────────────
+
+      - name: Update README.md
+        if: steps.check.outputs.skip != 'true'
+        run: |
+          echo "=== Updating README ==="
+          VERSION="${{ steps.version.outputs.ffmpeg_version }}"
+
+          if grep -q "ghcr.io/dk307/hometimeline-base" README.md; then
+            sed -i "s|ghcr.io/dk307/hometimeline-base:ffmpeg-[0-9.]*|ghcr.io/dk307/hometimeline-base:ffmpeg-${VERSION}|g" README.md
+            echo "Updated existing hometimeline-base entry (ffmpeg-$VERSION)"
+          else
+            echo "hometimeline-base entry not found in README — skipping auto-add (add manually)"
+          fi
+
+      - name: Commit README changes
+        if: always() && steps.check.outputs.skip != 'true'
+        run: |
+          VERSION="${{ steps.version.outputs.ffmpeg_version }}"
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          git add README.md
+          git diff --cached --quiet || git commit -m "chore(hometimeline-base): update README to ffmpeg-${VERSION}"
+          git push origin main

@@ -13,6 +13,7 @@ ARM64-only Docker containers built and published to GHCR. Single repo, automated
 |-----------|----------|-------------|------|
 | [`llama-cpp-embed-nomic`](#llama-cpp-embed-nomic) | [ggml-org/llama.cpp](https://github.com/ggml-org/llama.cpp) | nomic-embed-text embedding server | `b10186`, `latest` |
 | [`yolo-rest`](#yolo-rest) | [Tencent/ncnn](https://github.com/Tencent/ncnn) | YOLO object-detection REST server | `ncnn-20260526`, `latest` |
+| [`hometimeline-base`](#hometimeline-base) | [FFmpeg/FFmpeg](https://github.com/FFmpeg/FFmpeg) | FFmpeg optimised for ARM64 Cortex-A78C | `ffmpeg-8.1.2`, `latest` |
 
 ---
 
@@ -182,18 +183,73 @@ docker inspect --format='{{.State.Health.Status}}' yolo
 
 ---
 
+### hometimeline-base
+
+FFmpeg optimised for the Snapdragon 8cx Gen 3 (Cortex-A78C). Built from source with Clang and ARM64-tuned flags. Includes libx264, libx265, libvpx, libsvtav1 (AV1), libfdk-aac, libopus, libjpeg-turbo, and Vulkan.
+
+**No EXPOSE, no ENTRYPOINT** — this is a base image for `COPY --from` in downstream containers.
+
+**Pull:**
+```bash
+# Latest FFmpeg release
+docker pull ghcr.io/dk307/hometimeline-base:latest
+
+# Pinned to specific FFmpeg version
+docker pull ghcr.io/dk307/hometimeline-base:ffmpeg-8.1.2
+```
+
+**Test:**
+```bash
+# Verify ffmpeg
+docker run --rm ghcr.io/dk307/hometimeline-base:latest ffmpeg -version
+
+# Verify ffprobe
+docker run --rm ghcr.io/dk307/hometimeline-base:latest ffprobe -version
+
+# List available codecs
+docker run --rm ghcr.io/dk307/hometimeline-base:latest ffmpeg -codecs 2>/dev/null | grep -E "libx264|libx265|libvpx|libsvtav1|libfdk_aac|mjpeg"
+```
+
+**Use in downstream Dockerfile:**
+```dockerfile
+FROM ghcr.io/dk307/hometimeline-base:latest AS ffmpeg
+
+FROM ubuntu:26.04 AS final
+COPY --from=ffmpeg /usr/local/bin/ffmpeg /usr/local/bin/ffmpeg
+COPY --from=ffmpeg /usr/local/bin/ffprobe /usr/local/bin/ffprobe
+COPY --from=ffmpeg /usr/local/lib/ /usr/local/lib/
+ENV LD_LIBRARY_PATH=/usr/local/lib:${LD_LIBRARY_PATH}
+```
+
+**Codecs:**
+| Type | Codec | Library |
+|------|-------|---------|
+| Video | H.264/AVC | libx264 |
+| Video | H.265/HEVC | libx265 |
+| Video | VP8/VP9 | libvpx |
+| Video | AV1 | libsvtav1 (built from source) |
+| Video | MJPEG | libjpeg-turbo |
+| Audio | AAC | libfdk-aac |
+| Audio | Opus | libopus |
+
+**Protocols:** file, pipe, tcp, rtsp, rtmp, hls, https
+
+---
+
 ## How Updates Work
 
-Upstream releases are monitored daily. When a new release is detected:
+Upstream releases are monitored. When a new release is detected:
 
 **llama-cpp-embed-nomic:** `release-monitor.yml` checks [ggml-org/llama.cpp](https://github.com/ggml-org/llama.cpp) daily → triggers `llama-cpp-embed-nomic.yml` → build, test, push.
 
 **yolo-rest:** `ncnn-release-monitor.yml` checks [Tencent/ncnn](https://github.com/Tencent/ncnn) daily → triggers `yolo-rest.yml` → build, test, push.
 
+**hometimeline-base:** `hometimeline-base.yml` checks [FFmpeg/FFmpeg](https://github.com/FFmpeg/FFmpeg) weekly (Monday 02:00 UTC) → build, test, push. FFmpeg has no GitHub Releases — only tags (`n*` format).
+
 1. Monitor workflow compares upstream tag against published GHCR tags
-2. If new, triggers build workflow via `repository_dispatch`
-3. Build compiles ncnn from source, builds server binary, downloads models
-4. Smoke tests verify health, model listing, and detection with each model type
+2. If new, triggers build workflow (via `repository_dispatch` or direct schedule)
+3. Build compiles from source with Clang and ARM64-tuned flags
+4. Smoke tests verify binaries, codecs, and protocols
 5. Image pushed to GHCR with version tag and `:latest`
 
 **Manual trigger:**
@@ -203,6 +259,9 @@ gh workflow run llama-cpp-embed-nomic.yml -f tag=<release-tag>
 
 # yolo-rest
 gh workflow run yolo-rest.yml -f ncnn_tag=20260526
+
+# hometimeline-base
+gh workflow run hometimeline-base.yml -f ffmpeg_version=8.1.2
 ```
 
 ---
@@ -212,7 +271,7 @@ gh workflow run yolo-rest.yml -f ncnn_tag=20260526
 ```bash
 # llama-cpp — requires the upstream release tag as build arg
 docker build \
-  --build-arg LLAMA_CPP_TAG:b10107 \
+  --build-arg LLAMA_CPP_TAG=b10107 \
   -t llama-cpp-embed-nomic:local \
   ./llama-cpp
 
@@ -222,4 +281,10 @@ docker build \
   --build-arg MODELS_TAG=yolo-models-v1 \
   -t yolo-rest:local \
   ./yolo-rest
+
+# hometimeline-base — requires FFmpeg version as build arg
+docker build \
+  --build-arg FFMPEG_VERSION=8.1.2 \
+  -t hometimeline-base:local \
+  ./hometimeline-base
 ```

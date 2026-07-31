@@ -622,3 +622,153 @@ Trigger `llama-cpp-embed-nomic.yml` via `workflow_dispatch` with a specific rele
 5. **ncnn/Dockerfile** — when build instructions provided
 6. **ncnn.yml** — same pattern as llama-cpp
 7. **GHCR setup** — visibility, descriptions, labels
+
+---
+
+## 10. Container: hometimeline-base
+
+### 10.1 Upstream Details
+
+**Repository:** https://github.com/FFmpeg/FFmpeg
+**Upstream release tag:** `n8.1.2` (Jun 17 2026) — tags only, no GitHub Releases
+**Compiler:** Clang 21+ (C and C++) — mandatory, matches other containers
+**Base OS:** Ubuntu 26.04 LTS
+
+### 10.2 Purpose
+
+Optimised FFmpeg + ffprobe base image for the Snapdragon 8cx Gen 3 (SC8280XP). Provides a foundation for downstream video processing containers (`hometimeline-video`, `hometimeline-detect`, `hometimeline-api`) via `COPY --from`.
+
+### 10.3 Binaries produced
+
+| Binary | Purpose |
+|--------|---------|
+| `ffmpeg` | Media transcoding, filtering, streaming |
+| `ffprobe` | Media analysis and inspection |
+
+### 10.4 Video Codecs
+
+| Codec | Library | Enabled |
+|-------|---------|---------|
+| H.264/AVC | libx264 | Yes |
+| H.265/HEVC | libx265 | Yes |
+| VP8/VP9 | libvpx | Yes |
+| AV1 | libsvtav1 | Yes (built from source) |
+| MJPEG | libjpeg-turbo | Yes |
+
+### 10.5 Audio Codecs
+
+| Codec | Library | Enabled |
+|-------|---------|---------|
+| AAC | libfdk-aac | Yes |
+| Opus | libopus | Yes |
+
+### 10.6 Protocols
+
+| Protocol | Enabled |
+|----------|---------|
+| file | Yes |
+| pipe | Yes |
+| tcp | Yes |
+| rtsp | Yes |
+| rtmp | Yes |
+| hls | Yes |
+| https | Yes |
+
+### 10.7 CMake / Configure flags (exact)
+
+**SVT-AV1 (built from source):**
+```cmake
+CMAKE_BUILD_TYPE=Release
+CMAKE_C_COMPILER=clang
+CMAKE_CXX_COMPILER=clang++
+CMAKE_C_FLAGS=<same as CXX>
+CMAKE_CXX_FLAGS=<same as CXX>
+CMAKE_EXE_LINKER_FLAGS=-flto=thin
+BUILD_SHARED_LIBS=ON
+BUILD_APPS=OFF
+BUILD_DEC=ON
+```
+
+**FFmpeg:**
+```
+./configure \
+  --prefix=/usr/local \
+  --enable-gpl --enable-version3 \
+  --enable-libx264 --enable-libx265 --enable-libvpx \
+  --enable-libsvtav1 --enable-libfdk-aac --enable-libopus \
+  --enable-libjpeg-turbo --enable-vulkan \
+  --enable-openssl \
+  --enable-protocol=file --enable-protocol=pipe \
+  --enable-protocol=tcp --enable-protocol=rtsp \
+  --enable-protocol=rtmp --enable-protocol=hls \
+  --enable-protocol=https \
+  --enable-shared --disable-static \
+  --disable-doc --disable-programs \
+  --extra-cflags="${CFLAGS}" \
+  --extra-cxxflags="${CFLAGS}" \
+  --extra-ldflags="-flto=thin"
+```
+
+### 10.8 CFLAGS (exact)
+
+```
+-O3 -march=armv8.2-a+dotprod+fp16+fp16fml+rcpc -mtune=cortex-a78c
+-fno-math-errno -fassociative-math -fno-signed-zeros
+-fno-trapping-math -freciprocal-math -fno-plt -flto=thin
+```
+
+**Critical notes:**
+- **Both `CMAKE_C_FLAGS` and `CMAKE_CXX_FLAGS` must be set** for SVT-AV1 build.
+- **`--extra-cflags` and `--extra-cxxflags` must be passed** to FFmpeg's `./configure` for the same reason.
+- **ThinLTO (`-flto=thin`)** is production standard across all containers.
+- **Clang is mandatory** — matches llama-cpp and yolo-rest containers.
+
+### 10.9 Dockerfile
+
+**File:** `hometimeline-base/Dockerfile`
+
+Four-stage build: install deps → build SVT-AV1 → build FFmpeg → slim runtime.
+
+**Build-time configuration:**
+```bash
+# Build with default version
+docker build -t hometimeline-base:local ./hometimeline-base
+
+# Build with specific FFmpeg version
+docker build --build-arg FFMPEG_VERSION=8.1.2 -t hometimeline-base:local ./hometimeline-base
+
+# Build with specific SVT-AV1 version
+docker build --build-arg SVTAV1_VERSION=3.0.2 -t hometimeline-base:local ./hometimeline-base
+```
+
+### 10.10 Usage pattern (downstream COPY --from)
+
+```dockerfile
+FROM ghcr.io/dk307/hometimeline-base:latest AS ffmpeg
+
+FROM ubuntu:26.04 AS app-base
+# ... install your deps ...
+
+FROM app-base AS final
+COPY --from=ffmpeg /usr/local/bin/ffmpeg /usr/local/bin/ffmpeg
+COPY --from=ffmpeg /usr/local/bin/ffprobe /usr/local/bin/ffprobe
+COPY --from=ffmpeg /usr/local/lib/ /usr/local/lib/
+ENV LD_LIBRARY_PATH=/usr/local/lib:${LD_LIBRARY_PATH}
+```
+
+### 10.11 Tag Policy
+
+| Tag | Behavior |
+|-----|----------|
+| `:ffmpeg-8.1.2` | Pinned FFmpeg version (overwrites on rebuild) |
+| `:latest` | Most recent build |
+
+### 10.12 CI/CD
+
+**Workflow:** `.github/workflows/hometimeline-base.yml`
+**Triggers:** Weekly cron (Monday 02:00 UTC) + push to Dockerfile + manual dispatch
+**Runner:** `ubuntu-24.04-arm` (native ARM64)
+
+**Note:** FFmpeg has no GitHub Releases — only tags (`n*` format). The weekly cron fetches the latest `n*` tag from the GitHub API, compares against GHCR tags, and builds if new.
+
+**Smoke tests:** ffmpeg binary, ffprobe binary, required codecs, required protocols, ARM64 build config, GPL/libx264 verification.
