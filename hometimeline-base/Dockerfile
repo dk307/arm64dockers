@@ -111,15 +111,16 @@ FROM --platform=linux/arm64 ubuntu:26.04 AS runtime
 ENV DEBIAN_FRONTEND=noninteractive
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    libgcc-s1 libstdc++6 \
-    libx264-163 libx265-199 libvpx7 libopus0 \
-    libjpeg8 libva2 libssl3 \
-    libvulkan1 libspirv-tools \
+    libgcc-s1 libstdc++6 curl ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
+# FFmpeg binaries and self-installed libs
 COPY --from=ffmpeg /usr/local/bin/ffmpeg /usr/local/bin/ffmpeg
 COPY --from=ffmpeg /usr/local/bin/ffprobe /usr/local/bin/ffprobe
 COPY --from=ffmpeg /usr/local/lib/ /usr/local/lib/
+
+# Codec shared libraries from build stage (FFmpeg links dynamically against these)
+COPY --from=ffmpeg /usr/lib/aarch64-linux-gnu/ /usr/lib/aarch64-linux-gnu/
 
 RUN ldconfig
 
