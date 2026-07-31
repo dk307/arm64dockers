@@ -707,7 +707,7 @@ BUILD_DEC=ON
   --enable-protocol=rtmp --enable-protocol=hls \
   --enable-protocol=https \
   --enable-shared --disable-static \
-  --disable-doc --disable-programs \
+  --disable-doc \
   --extra-cflags="${CFLAGS}" \
   --extra-cxxflags="${CFLAGS}" \
   --extra-ldflags="-flto=thin"

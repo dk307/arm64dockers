@@ -73,7 +73,7 @@ RUN git clone --depth 1 --branch n${FFMPEG_VERSION} \
 
 WORKDIR /src/ffmpeg
 
-ENV PKG_CONFIG_PATH=/usr/local/lib/pkgconfig:${PKG_CONFIG_PATH}
+ENV PKG_CONFIG_PATH=/usr/local/lib/pkgconfig
 
 RUN ./configure \
     --prefix=/usr/local \
@@ -99,7 +99,6 @@ RUN ./configure \
     --enable-shared \
     --disable-static \
     --disable-doc \
-    --disable-programs \
     --extra-cflags="${CFLAGS}" \
     --extra-cxxflags="${CFLAGS}" \
     --extra-ldflags="-flto=thin" \
@@ -127,7 +126,7 @@ COPY --from=ffmpeg /usr/lib/aarch64-linux-gnu/ /usr/lib/aarch64-linux-gnu/
 
 RUN ldconfig
 
-ENV LD_LIBRARY_PATH=/usr/local/lib:${LD_LIBRARY_PATH}
+ENV LD_LIBRARY_PATH=/usr/local/lib
 ENV PATH=/usr/local/bin:${PATH}
 
 LABEL org.opencontainers.image.title="hometimeline-base" \
