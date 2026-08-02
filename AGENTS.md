@@ -186,7 +186,7 @@ CI smoke tests verify: health endpoint, HEALTHCHECK status, /models listing, det
 **Image:** `ghcr.io/dk307/hometimeline-base`
 **Purpose:** FFmpeg optimised for Snapdragon 8cx Gen 3 — base layer for downstream video containers
 **Codecs:** libx264, libx265, libvpx, libsvtav1, libfdk-aac, libopus, libjpeg-turbo
-**GPU:** Vulkan encode/decode (dlopen at runtime)
+**GPU:** Vulkan encode/decode + compute filters (dlopen), OpenCL filters (dlopen), libshaderc (built from source)
 **No EXPOSE, no ENTRYPOINT** — pure base layer for `COPY --from`
 
 #### Key build facts
@@ -194,9 +194,11 @@ CI smoke tests verify: health endpoint, HEALTHCHECK status, /models listing, det
 - **Compiler:** Clang 21+ (same as other containers)
 - **FFmpeg:** Release tag `n8.1.2` — tags only, no GitHub Releases
 - **SVT-AV1:** Built from source as **static** (`BUILD_SHARED_LIBS=OFF`), no NUMA — eliminates libSvtAv1Enc.so and libnuma.so runtime deps
+- **libshaderc:** Built from source (`google/shaderc` v2026.3) — Debian bookworm's package has unresolved glslang/SPIRV-Tools symbols. Build includes glslang + spirv-tools via `utils/git-sync-deps`.
 - **Base OS:** Debian bookworm (matches python:3.14-slim glibc for upstream compat)
-- **Vulkan:** `--enable-vulkan` with Vulkan headers from `vulkan-sdk-1.4.357.0` (bookworm ships 1.3.239, FFmpeg needs ≥1.3.277). dlopen'd at runtime, no link-time dependency.
-- **libshaderc:** intentionally omitted — Debian bookworm's libshaderc.so has unresolved glslang/SPIRV-Tools references. Vulkan image filters (nlmeans_vulkan, scale_vulkan, etc.) are not built.
+- **Vulkan:** `--enable-vulkan` with Vulkan headers from `vulkan-sdk-1.4.357.0` (bookworm ships 1.3.239, FFmpeg needs ≥1.3.277). dlopen'd at runtime.
+- **OpenCL:** `--enable-opencl` via ocl-icd-opencl-dev. Links `libOpenCL.so.1` at build time. Runtime: `ocl-icd-libopencl1` + `mesa-opencl-icd`.
+- **Runtime GPU packages:** libvulkan1, mesa-vulkan-drivers, ocl-icd-libopencl1, mesa-opencl-icd, libegl-mesa0, libgl1-mesa-dri, libgbm1
 - **Weekly cron** (Monday 02:00 UTC) — FFmpeg releases ~monthly, daily check unnecessary
 
 #### CFLAGS (exact — identical to llama-cpp and yolo-rest)

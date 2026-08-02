@@ -676,19 +676,19 @@ Optimised FFmpeg + ffprobe base image for the Snapdragon 8cx Gen 3 (SC8280XP). P
 | hls | Yes |
 | https | Yes |
 
-### 10.7 GPU Acceleration (Vulkan)
+### 10.7 GPU Acceleration (Vulkan + OpenCL + libshaderc)
 
-**Vulkan encode/decode:** `--enable-vulkan` with Vulkan headers from `KhronosGroup/Vulkan-Headers` (`vulkan-sdk-1.4.357.0`). Bookworm ships 1.3.239, FFmpeg 8.1.2 requires ≥1.3.277. Headers are installed from source and `vulkan.pc` is patched. Vulkan is loaded at runtime via dlopen — no link-time dependency. Enables h264_vulkan, hevc_vulkan, av1_vulkan hw accel and encode.
+**Vulkan encode/decode + compute filters:** `--enable-vulkan` with Vulkan headers from `KhronosGroup/Vulkan-Headers` (`vulkan-sdk-1.4.357.0`). Bookworm ships 1.3.239, FFmpeg 8.1.2 requires ≥1.3.277. Headers installed from source, `vulkan.pc` patched. Vulkan loaded at runtime via dlopen — no link-time dependency. Enables h264_vulkan, hevc_vulkan, av1_vulkan hw accel/encode, plus Vulkan compute filters (scale_vulkan, nlmeans_vulkan, gblur_vulkan, overlay_vulkan, etc.).
 
-**libshaderc:** intentionally omitted — Debian bookworm's `libshaderc.so` has unresolved glslang/SPIRV-Tools references that the BFD linker rejects. Vulkan image filters (nlmeans_vulkan, scale_vulkan, etc.) require `spirv_library` which depends on libshaderc — skipped. Can be added later by building shaderc from source or upgrading to a fixed Debian package.
+**libshaderc (built from source):** Debian bookworm's `libshaderc.so` has 48 unresolved glslang/SPIRV-Tools symbols — a packaging bug. Built from source using `google/shaderc` v2026.3, which fetches glslang + spirv-tools via `utils/git-sync-deps`. Produces a self-contained `libshaderc.so` with all symbols resolved. Enables `spirv_library` feature for Vulkan compute filters.
 
-**OpenCL:** intentionally omitted — `--enable-opencl` links `libOpenCL.so.1` at build time, which is not available in downstream python:3.14-slim runtime.
+**OpenCL filters:** `--enable-opencl` via `ocl-icd-opencl-dev`. Links `libOpenCL.so.1` at build time (NOT dlopen). Runtime: `ocl-icd-libopencl1` + `mesa-opencl-icd`. Enables tonemap_opencl, unsharp_opencl, overlay_opencl, deshake_opencl, etc.
 
 | Feature | Build dep | Link-time dep | Runtime dep |
 |---------|-----------|---------------|-------------|
-| Vulkan encode/decode | `libvulkan-dev` + headers ≥ 1.3.277 | No (dlopen) | None in container |
-| Vulkan image filters | `libshaderc-dev` (not built) | Yes | `libshaderc1` (not included) |
-| OpenCL | `ocl-icd-opencl-dev` (not built) | Yes | `libOpenCL.so.1` (not included) |
+| Vulkan encode/decode | `libvulkan-dev` + headers ≥ 1.3.277 | No (dlopen) | `libvulkan1`, `mesa-vulkan-drivers` |
+| Vulkan compute filters | `libshaderc` (built from source) | Yes (`libshaderc.so`) | `libshaderc.so` (copied from build) |
+| OpenCL filters | `ocl-icd-opencl-dev` | Yes (`libOpenCL.so.1`) | `ocl-icd-libopencl1`, `mesa-opencl-icd` |
 
 ### 10.8 CMake / Configure flags (exact)
 
@@ -718,7 +718,7 @@ BUILD_DEC=ON
   --enable-libx264 --enable-libx265 --enable-libvpx \
   --enable-libsvtav1 --enable-libfdk-aac \
   --enable-openssl \
-  --enable-vulkan \
+  --enable-vulkan --enable-libshaderc --enable-opencl \
   --enable-protocol=file --enable-protocol=pipe \
   --enable-protocol=tcp --enable-protocol=rtsp \
   --enable-protocol=rtmp --enable-protocol=hls \

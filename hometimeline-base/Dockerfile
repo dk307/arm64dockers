@@ -28,17 +28,19 @@ RUN echo "deb http://deb.debian.org/debian bookworm main contrib non-free non-fr
         >> /etc/apt/sources.list \
     && rm -f /etc/apt/sources.list.d/debian.sources
 
-# Core build deps (including Vulkan, libnuma)
+# Core build deps (including Vulkan, libnuma, OpenCL)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     wget gpg lsb-release gnupg \
     cmake make git autoconf automake libtool pkg-config \
-    nasm yasm curl ca-certificates \
+    ninja-build \
+    nasm yasm curl ca-certificates python3 \
     libx264-dev libx265-dev libvpx-dev \
     libfdk-aac-dev libopus-dev \
     libavcodec-dev \
     libjpeg62-turbo-dev \
     libssl-dev \
     libvulkan-dev libnuma-dev \
+    ocl-icd-opencl-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # Vulkan headers >= 1.3.277 required by FFmpeg 8.1.2 (bookworm ships 1.3.239).
@@ -55,12 +57,10 @@ RUN git clone --depth 1 --branch ${VULKAN_HEADERS_VERSION} \
     && pkg-config --modversion vulkan \
     && rm -rf /tmp/vulkan-headers
 
-# NOTE: --enable-libshaderc intentionally omitted.  Debian bookworm's libshaderc.so
-# has unresolved glslang/SPIRV-Tools references that the BFD linker rejects.
-# Vulkan encode/decode (h264, hevc, av1) works with just --enable-vulkan.
-# Vulkan image filters (nlmeans_vulkan, scale_vulkan, etc.) require spirv_library
-# which needs libshaderc — skipped here.  Can be added later by building
-# shaderc from source or upgrading to a fixed Debian package.
+# NOTE: --enable-libshaderc requires building shaderc from source.
+# Debian bookworm's libshaderc.so has unresolved glslang/SPIRV-Tools symbols
+# that the BFD linker rejects.  Building from source produces a self-contained
+# .so with all symbols resolved.
 
 # LLVM 21 from official apt repo
 RUN wget -qO /tmp/llvm-snapshot.gpg.key https://apt.llvm.org/llvm-snapshot.gpg.key \
@@ -121,6 +121,33 @@ RUN cmake -B build -DCMAKE_BUILD_TYPE=Release \
     && cmake --install build
 
 # ---------------------------------------------------------------------------
+# Stage 2b: Build libshaderc from source (Debian's package is broken)
+# ---------------------------------------------------------------------------
+FROM --platform=linux/arm64 deps AS shaderc
+
+ARG SHADERC_VERSION=v2026.3
+
+RUN git clone --depth 1 --branch ${SHADERC_VERSION} \
+    https://github.com/google/shaderc.git /src/shaderc
+
+WORKDIR /src/shaderc
+
+# Fetch glslang, spirv-tools, spirv-headers into third_party/
+RUN ./utils/git-sync-deps
+
+RUN cmake -B build -GNinja \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_C_COMPILER=clang \
+    -DCMAKE_CXX_COMPILER=clang++ \
+    -DCMAKE_INSTALL_PREFIX=/usr/local \
+    -DSHADERC_SKIP_TESTS=ON \
+    -DSHADERC_SKIP_EXAMPLES=ON \
+    -DSHADERC_SKIP_EXECUTABLES=ON \
+    -DSHADERC_SKIP_COPYRIGHT_CHECK=ON \
+    && cmake --build build -j"$(nproc)" \
+    && cmake --install build
+
+# ---------------------------------------------------------------------------
 # Stage 3: Build FFmpeg from source
 # ---------------------------------------------------------------------------
 FROM --platform=linux/arm64 deps AS ffmpeg
@@ -133,6 +160,12 @@ ARG CFLAGS="-O3 -march=armv8.2-a+dotprod+fp16+fp16fml+rcpc -mtune=cortex-a78c \
 COPY --from=svtav1 /usr/local/lib/ /usr/local/lib/
 COPY --from=svtav1 /usr/local/include/ /usr/local/include/
 COPY --from=svtav1 /usr/local/lib/pkgconfig/ /usr/local/lib/pkgconfig/
+
+# Copy libshaderc from source build (self-contained .so with all deps resolved)
+COPY --from=shaderc /usr/local/lib/libshaderc* /usr/local/lib/
+COPY --from=shaderc /usr/local/include/shaderc/ /usr/local/include/shaderc/
+COPY --from=shaderc /usr/local/lib/pkgconfig/shaderc.pc /usr/local/lib/pkgconfig/
+RUN ln -sf shaderc.pc /usr/local/lib/pkgconfig/spirv_library.pc
 
 # Create dummy libsvtav1.so.0 so upstream COPY --from=ffmpeg-source libsvtav1.so* succeeds.
 # The real SVT-AV1 is statically linked into ffmpeg — this file is never loaded.
@@ -147,11 +180,15 @@ WORKDIR /src/ffmpeg
 # can find our local libs (SVT-AV1) AND system libs (vulkan, etc.)
 ENV PKG_CONFIG_PATH=/usr/local/lib/pkgconfig:/usr/lib/aarch64-linux-gnu/pkgconfig
 
-# Debug: verify pkg-config finds vulkan
+# Debug: verify pkg-config finds vulkan and shaderc
 RUN echo "=== pkg-config checks ===" \
     && pkg-config --exists --print-errors "vulkan >= 1.3.277" \
     && pkg-config --modversion vulkan \
-    && echo "=== vulkan pkg-config OK ==="
+    && echo "=== vulkan pkg-config OK ===" \
+    && pkg-config --exists --print-errors "shaderc >= 2019.1" \
+    && pkg-config --modversion shaderc \
+    && pkg-config --libs shaderc \
+    && echo "=== shaderc pkg-config OK ==="
 
 # Build with --enable-static --disable-shared: FFmpeg's own libs (.a) and
 # SVT-AV1 (.a) are statically linked into the binary.  External codec .so
@@ -171,6 +208,8 @@ RUN (./configure \
     --enable-libfdk-aac \
     --enable-openssl \
     --enable-vulkan \
+    --enable-libshaderc \
+    --enable-opencl \
     --enable-protocol=file \
     --enable-protocol=pipe \
     --enable-protocol=tcp \
@@ -200,10 +239,13 @@ ENV DEBIAN_FRONTEND=noninteractive
 
 # Runtime deps: minimal — ffmpeg is statically linked against FFmpeg core and
 # SVT-AV1.  External codec .so files (libx264, libx265, libvpx, libfdk-aac)
-# and basic libs are needed.  Vulkan ICD loaders are NOT needed — ffmpeg
-# loads them via dlopen.
+# and basic libs are needed.  Vulkan and OpenCL are loaded at runtime via
+# dlopen — ICD loaders and Mesa drivers provide the GPU backends.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libgcc-s1 libstdc++6 curl ca-certificates \
+    libvulkan1 mesa-vulkan-drivers \
+    ocl-icd-libopencl1 mesa-opencl-icd \
+    libegl-mesa0 libgl1-mesa-dri libgbm1 \
     && rm -rf /var/lib/apt/lists/*
 
 # FFmpeg binaries (statically linked against FFmpeg core + SVT-AV1;

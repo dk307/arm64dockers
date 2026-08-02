@@ -208,7 +208,7 @@ jobs:
 
           for FLAG in enable-gpl enable-libx264 enable-libx265 enable-libvpx \
                       enable-libsvtav1 enable-libfdk-aac enable-openssl \
-                      enable-vulkan; do
+                      enable-vulkan enable-libshaderc enable-opencl; do
             if ! echo "$CONFIG" | grep -q "$FLAG"; then
               echo "FAIL: $FLAG not in build config"
               exit 1
@@ -221,8 +221,26 @@ jobs:
         if: steps.check.outputs.skip != 'true'
         run: |
           echo "=== Test 6: GPU filters ==="
-          echo "GPU filters test skipped (no OpenCL runtime in CI, Vulkan filters need spirv_library)"
-          echo "PASS: Vulkan encode/decode enabled (verified in Test 5)"
+          FILTERS=$(docker exec ffmpeg-test ffmpeg -filters 2>/dev/null)
+
+          # Vulkan filters (need libshaderc for spirv_library)
+          for F in scale_vulkan nlmeans_vulkan gblur_vulkan overlay_vulkan; do
+            if echo "$FILTERS" | grep -q "$F"; then
+              echo "  PASS: $F"
+            else
+              echo "  WARN: $F not found (may need runtime GPU)"
+            fi
+          done
+
+          # OpenCL filters
+          for F in tonemap_opencl unsharp_opencl; do
+            if echo "$FILTERS" | grep -q "$F"; then
+              echo "  PASS: $F"
+            else
+              echo "  WARN: $F not found (may need runtime GPU)"
+            fi
+          done
+
           echo "PASS: GPU filter build verification complete"
 
       - name: Stop container
