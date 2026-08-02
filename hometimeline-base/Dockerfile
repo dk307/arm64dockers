@@ -124,6 +124,11 @@ COPY --from=ffmpeg /usr/local/lib/ /usr/local/lib/
 # Codec shared libraries from build stage (FFmpeg links dynamically against these)
 COPY --from=ffmpeg /usr/lib/aarch64-linux-gnu/ /usr/lib/aarch64-linux-gnu/
 
+# libavcodec.so* is built by FFmpeg with --prefix=/usr/local, so it lives in
+# /usr/local/lib/.  Copy it to /usr/lib/aarch64-linux-gnu/ as well so the
+# upstream HomeTimeline Dockerfile can COPY it from FFMPEG_SRC_CODEC_LIB_DIR.
+RUN cp /usr/local/lib/libavcodec.so* /usr/lib/aarch64-linux-gnu/ 2>/dev/null || true
+
 RUN ldconfig
 
 ENV LD_LIBRARY_PATH=/usr/local/lib

@@ -1,0 +1,116 @@
+name: Check HomeTimeline releases
+
+on:
+  schedule:
+    - cron: '30 6 * * *'  # Daily at 06:30 UTC (offset from llama.cpp 06:00 and ncnn 07:00)
+  workflow_dispatch:       # Manual trigger for testing
+
+env:
+  HOMETIMELINE_REPO: dk307/HomeTimeline
+  IMAGE_NAME: hometimeline-custom
+
+permissions:
+  contents: write
+
+jobs:
+  check-hometimeline:
+    runs-on: ubuntu-24.04-arm  # Native ARM64
+    steps:
+      - name: Get latest upstream release tag
+        id: upstream
+        run: |
+          echo "=== HomeTimeline upstream release check ==="
+          echo "Timestamp: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          echo "Repository: ${{ env.HOMETIMELINE_REPO }}"
+          echo ""
+
+          RESPONSE=$(curl -sf https://api.github.com/repos/${{ env.HOMETIMELINE_REPO }}/releases/latest)
+          if [ $? -ne 0 ]; then
+            echo "ERROR: Failed to fetch releases from GitHub API"
+            echo "URL: https://api.github.com/repos/${{ env.HOMETIMELINE_REPO }}/releases/latest"
+            exit 1
+          fi
+
+          TAG=$(echo "$RESPONSE" | jq -r '.tag_name')
+          PUBLISHED=$(echo "$RESPONSE" | jq -r '.published_at')
+          URL=$(echo "$RESPONSE" | jq -r '.html_url')
+
+          echo "Upstream tag: $TAG"
+          echo "Published: $PUBLISHED"
+          echo "Release URL: $URL"
+
+          if [ -z "$TAG" ] || [ "$TAG" = "null" ]; then
+            echo "ERROR: Could not extract tag_name from response"
+            exit 1
+          fi
+
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo ""
+
+      - name: Get last built tag from GHCR
+        id: builtin
+        run: |
+          echo "=== GHCR tag check ==="
+          IMAGE="${{ github.repository_owner }}/${{ env.IMAGE_NAME }}"
+          TAGS=$(curl -sf "https://ghcr.io/v2/${IMAGE}/tags/list" 2>/dev/null || echo "")
+
+          if [ -z "$TAGS" ]; then
+            echo "No existing tags found in GHCR (first build)"
+            echo "tag=none" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "Existing tags:"
+          echo "$TAGS" | jq -r '.tags[]' 2>/dev/null || echo "$TAGS"
+          echo ""
+
+          BUILT=$(echo "$TAGS" | grep -oP 'v[0-9]+\.[0-9]+\.[0-9]+' | sort -V | tail -1)
+          echo "Latest built version: ${BUILT:-none}"
+          echo "tag=${BUILT:-none}" >> "$GITHUB_OUTPUT"
+          echo ""
+
+      - name: Compare tags
+        if: steps.upstream.outcome == 'success'
+        run: |
+          echo "=== Tag comparison ==="
+          UPSTREAM="${{ steps.upstream.outputs.tag }}"
+          BUILT="${{ steps.builtin.outputs.tag }}"
+          echo "Upstream HomeTimeline: $UPSTREAM"
+          echo "Built:                 $BUILT"
+
+          if [ "$UPSTREAM" = "$BUILT" ]; then
+            echo "Status: UP TO DATE"
+          else
+            echo "Status: NEW RELEASE AVAILABLE"
+          fi
+          echo ""
+
+      - name: Trigger hometimeline-custom build
+        if: steps.upstream.outputs.tag != steps.builtin.outputs.tag
+        run: |
+          TAG="${{ steps.upstream.outputs.tag }}"
+          echo "=== Triggering hometimeline-custom build ==="
+          echo "HomeTimeline tag: $TAG"
+
+          PAYLOAD=$(jq -n \
+            --arg tag "$TAG" \
+            '{event_type: "hometimeline-release", client_payload: {hometimeline_tag: $tag}}')
+
+          HTTP_CODE=$(curl -sf -o /dev/null -w "%{http_code}" -X POST \
+            -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+            -H "Accept: application/vnd.github.v3+json" \
+            https://api.github.com/repos/${{ github.repository }}/dispatches \
+            -d "$PAYLOAD")
+
+          if [ "$HTTP_CODE" = "204" ]; then
+            echo "Build triggered successfully (HTTP $HTTP_CODE)"
+          else
+            echo "ERROR: Failed to trigger build (HTTP $HTTP_CODE)"
+            exit 1
+          fi
+
+      - name: No new release
+        if: steps.upstream.outputs.tag == steps.builtin.outputs.tag
+        run: |
+          echo "=== No action needed ==="
+          echo "HomeTimeline ${{ steps.upstream.outputs.tag }} already built"

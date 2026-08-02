@@ -1,0 +1,243 @@
+name: Build hometimeline-custom
+
+on:
+  repository_dispatch:
+    types:
+      - hometimeline-release
+      - hometimeline-base-rebuild
+
+  workflow_dispatch:
+    inputs:
+      hometimeline_tag:
+        description: 'HomeTimeline release tag (e.g. v0.12.4)'
+        required: true
+        type: string
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository_owner }}/hometimeline-custom
+  HOMETIMELINE_REPO: dk307/HomeTimeline
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  build-test-push:
+    runs-on: ubuntu-24.04-arm  # Native ARM64 — no QEMU needed
+    steps:
+      - name: Resolve tag
+        id: tag
+        run: |
+          echo "=== Tag resolution ==="
+          echo "Trigger: ${{ github.event_name }}"
+          echo "Repository: ${{ github.repository }}"
+          echo ""
+
+          if [ "${{ github.event_name }}" = "repository_dispatch" ]; then
+            DISPATCH_TYPE="${{ github.event.action }}"
+            TAG="${{ github.event.client_payload.hometimeline_tag }}"
+            echo "Dispatch type: $DISPATCH_TYPE"
+            echo "From dispatch: $TAG"
+
+            # hometimeline-base-rebuild has no tag — fetch latest
+            if [ -z "$TAG" ] && [ "$DISPATCH_TYPE" = "hometimeline-base-rebuild" ]; then
+              echo "No tag in payload (base rebuild trigger) — fetching latest release..."
+              RESPONSE=$(curl -sf https://api.github.com/repos/${{ env.HOMETIMELINE_REPO }}/releases/latest)
+              TAG=$(echo "$RESPONSE" | jq -r '.tag_name')
+              echo "Latest HomeTimeline release: $TAG"
+            fi
+          elif [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            TAG="${{ inputs.hometimeline_tag }}"
+            echo "From manual input: $TAG"
+          fi
+
+          if [ -z "$TAG" ]; then
+            echo "ERROR: No tag provided"
+            exit 1
+          fi
+
+          # Validate tag format: v*.*.*
+          if [[ ! "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "ERROR: Invalid tag format '$TAG'"
+            echo "Expected format: v followed by digits.digits.digits (e.g. v0.12.4)"
+            exit 1
+          fi
+
+          echo "Resolved tag: $TAG"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo ""
+
+      - uses: actions/checkout@v4
+        name: Checkout arm64dockers repo
+
+      - name: Clone HomeTimeline at pinned tag
+        run: |
+          echo "=== Cloning HomeTimeline ${{ steps.tag.outputs.tag }} ==="
+          git clone --depth 1 --branch ${{ steps.tag.outputs.tag }} \
+            https://github.com/${{ env.HOMETIMELINE_REPO }}.git hometimeline-src
+          echo "Upstream Dockerfile:"
+          head -20 hometimeline-src/docker/Dockerfile
+          echo "..."
+          echo ""
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Log build configuration
+        run: |
+          echo "=== Build configuration ==="
+          echo "Registry: ${{ env.REGISTRY }}"
+          echo "Image: ${{ env.IMAGE_NAME }}"
+          echo "Tag: ${{ steps.tag.outputs.tag }}"
+          echo "Upstream repo: ${{ env.HOMETIMELINE_REPO }}"
+          echo "Dockerfile: hometimeline-src/docker/Dockerfile (upstream)"
+          echo "Runner: ubuntu-24.04-arm (native ARM64)"
+          echo ""
+          echo "Using upstream Dockerfile directly — any changes are picked up automatically"
+
+      # Build using the UPSTREAM Dockerfile from the cloned repo.
+      # This means upstream Dockerfile changes (new deps, stage restructures, etc.)
+      # are automatically used on the next release build — no manual sync needed.
+      - name: Build image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./hometimeline-src
+          file: ./hometimeline-src/docker/Dockerfile
+          target: app-custom-ffmpeg
+          push: false
+          load: true
+          tags: ${{ env.IMAGE_NAME }}:test
+          build-contexts: |
+            ffmpeg-source=docker-image://ghcr.io/dk307/hometimeline-base:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # ── Smoke tests ──────────────────────────────────────────
+
+      - name: Start container
+        run: |
+          docker run -d --name hometimeline-test \
+            -p 8080:8080 \
+            --health-cmd 'curl -sf http://localhost:8080/api/v1/health || exit 1' \
+            --health-interval 5s \
+            --health-timeout 5s \
+            --health-start-period 30s \
+            --health-retries 3 \
+            ${{ env.IMAGE_NAME }}:test
+          echo "Waiting for container to start..."
+          sleep 10
+
+      - name: Test 1 — /api/v1/health endpoint
+        run: |
+          echo "=== Test 1: /api/v1/health ==="
+          for i in $(seq 1 12); do
+            RESP=$(curl -sf http://localhost:8080/api/v1/health 2>/dev/null || echo "")
+            if [ -n "$RESP" ]; then
+              echo "$RESP" | jq . 2>/dev/null || echo "$RESP"
+              echo "PASS: health endpoint responding"
+              break
+            fi
+            echo "  [$i/12] Waiting..."
+            sleep 5
+          done
+          if [ -z "$RESP" ]; then
+            echo "FAIL: health endpoint not responding after 60s"
+            docker logs hometimeline-test
+            exit 1
+          fi
+
+      - name: Test 2 — Docker HEALTHCHECK status
+        run: |
+          echo "=== Test 2: Docker HEALTHCHECK ==="
+          for i in $(seq 1 12); do
+            STATUS=$(docker inspect --format='{{.State.Health.Status}}' hometimeline-test 2>/dev/null || echo "unknown")
+            echo "  [$i/12] Health status: $STATUS"
+            if [ "$STATUS" = "healthy" ]; then
+              echo "PASS: container is healthy"
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "FAIL: container did not become healthy within 60s"
+          docker inspect --format='{{json .State.Health}}' hometimeline-test | jq .
+          docker logs hometimeline-test
+          exit 1
+
+      - name: Test 3 — ffmpeg binary (custom build)
+        run: |
+          echo "=== Test 3: ffmpeg binary ==="
+          OUTPUT=$(docker exec hometimeline-test ffmpeg -version 2>&1)
+          echo "$OUTPUT" | head -5
+
+          if ! echo "$OUTPUT" | grep -q "ffmpeg version"; then
+            echo "FAIL: ffmpeg binary not working"
+            exit 1
+          fi
+          echo "PASS: ffmpeg binary OK"
+
+      - name: Test 4 — go2rtc binary
+        run: |
+          echo "=== Test 4: go2rtc binary ==="
+          OUTPUT=$(docker exec hometimeline-test go2rtc --version 2>&1 || true)
+          if [ -z "$OUTPUT" ]; then
+            echo "WARN: go2rtc not responding (may need config), checking binary exists"
+            docker exec hometimeline-test which go2rtc || { echo "FAIL: go2rtc not found"; exit 1; }
+          fi
+          echo "PASS: go2rtc binary present"
+          echo "$OUTPUT" | head -3
+
+      - name: Test 5 — Python app loads
+        run: |
+          echo "=== Test 5: Python app ==="
+          OUTPUT=$(docker exec hometimeline-test python -c "import app.main; print('app module OK')" 2>&1)
+          echo "$OUTPUT"
+          if ! echo "$OUTPUT" | grep -q "app module OK"; then
+            echo "FAIL: Python app module did not load"
+            exit 1
+          fi
+          echo "PASS: Python app module loads"
+
+      - name: Stop container
+        if: always()
+        run: docker rm -f hometimeline-test 2>/dev/null || true
+
+      # ── Push to GHCR ─────────────────────────────────────────
+
+      - name: Push image
+        run: |
+          docker tag ${{ env.IMAGE_NAME }}:test ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.tag.outputs.tag }}
+          docker tag ${{ env.IMAGE_NAME }}:test ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+          docker push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.tag.outputs.tag }}
+          docker push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+
+      # ── Update README ────────────────────────────────────────
+
+      - name: Update README.md
+        run: |
+          echo "=== Updating README ==="
+          TAG="${{ steps.tag.outputs.tag }}"
+          IMAGE="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}"
+
+          if grep -q "ghcr.io/dk307/hometimeline-custom" README.md; then
+            sed -i "s|ghcr.io/dk307/hometimeline-custom:v[0-9.]*|ghcr.io/dk307/hometimeline-custom:${TAG}|g" README.md
+            echo "Updated existing hometimeline-custom entry ($TAG)"
+          else
+            echo "hometimeline-custom entry not found in README — skipping auto-add (add manually)"
+          fi
+
+      - name: Commit README changes
+        if: always()
+        run: |
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          git add README.md
+          git diff --cached --quiet || git commit -m "chore(hometimeline-custom): update README to ${{ steps.tag.outputs.tag }}"
+          git push origin main

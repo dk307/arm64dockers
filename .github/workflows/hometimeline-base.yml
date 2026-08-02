@@ -256,3 +256,24 @@ jobs:
           git add README.md
           git diff --cached --quiet || git commit -m "chore(hometimeline-base): update README to ffmpeg-${VERSION}"
           git push origin main
+
+      # ── Trigger hometimeline-custom rebuild ───────────────────
+
+      - name: Trigger hometimeline-custom rebuild
+        if: steps.check.outputs.skip != 'true'
+        run: |
+          echo "=== Triggering hometimeline-custom rebuild ==="
+
+          PAYLOAD='{ "event_type": "hometimeline-base-rebuild", "client_payload": {} }'
+
+          HTTP_CODE=$(curl -sf -o /dev/null -w "%{http_code}" -X POST \
+            -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+            -H "Accept: application/vnd.github.v3+json" \
+            https://api.github.com/repos/${{ github.repository }}/dispatches \
+            -d "$PAYLOAD")
+
+          if [ "$HTTP_CODE" = "204" ]; then
+            echo "hometimeline-custom rebuild triggered (HTTP $HTTP_CODE)"
+          else
+            echo "WARNING: Failed to trigger rebuild (HTTP $HTTP_CODE)"
+          fi
