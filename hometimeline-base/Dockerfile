@@ -154,6 +154,12 @@ RUN echo "=== pkg-config checks ===" \
     && pkg-config --modversion glslang 2>&1 || true \
     && echo "--- shaderc lib files ---" \
     && ls -la /usr/lib/aarch64-linux-gnu/libshaderc* 2>&1 \
+    && echo "--- simulate FFmpeg configure check ---" \
+    && pkg-config --atleast-version="2019.1" --static spirv_library \
+    && echo "--- check header + function ---" \
+    && echo '#include <shaderc/shaderc.h>' > /tmp/shaderc_test.c \
+    && echo 'int main() { shaderc_compiler_initialize(); return 0; }' >> /tmp/shaderc_test.c \
+    && gcc -I$(pkg-config --cflags-only-I spirv_library | sed 's/-I//g') /tmp/shaderc_test.c $(pkg-config --libs spirv_library) -o /tmp/shaderc_test && echo "compile+link OK" \
     && echo "=== All pkg-config checks passed ==="
 
 # Build with --enable-static --disable-shared: FFmpeg's own libs (.a) and
@@ -161,7 +167,7 @@ RUN echo "=== pkg-config checks ===" \
 # files (libx264, libx265, libvpx, libfdk-aac, libshaderc) are still
 # dynamically linked and must be present at runtime.  Vulkan and OpenCL are
 # loaded at runtime via dlopen — no link-time dependency.
-RUN ./configure \
+RUN (./configure \
     --prefix=/usr/local \
     --cc=clang --cxx=clang++ \
     --enable-gpl \
@@ -190,7 +196,11 @@ RUN ./configure \
     --extra-cxxflags="${CFLAGS}" \
     --extra-ldflags="-flto=thin" \
     && make -j"$(nproc)" \
-    && make install
+    && make install) \
+  || { echo "=== CONFIGURE FAILED — dumping config.log ===" ; \
+       cat ffbuild/config.log 2>/dev/null | tail -200 ; \
+       echo "=== END config.log ===" ; \
+       exit 1 ; }
 
 # ---------------------------------------------------------------------------
 # Stage 4: Runtime — minimal Debian with binaries + shared libs
