@@ -312,8 +312,9 @@ jobs:
           fi
           echo "PASS: system_info build metadata OK"
 
-          # Verify app version (not 0.0.0.dev)
-          APP_VER=$(echo "$RESP" | jq -r '.app // empty' 2>/dev/null)
+          # Verify app version from /api/v1/health (not 0.0.0.dev)
+          HEALTH_RESP=$(docker exec hometimeline-test curl -sf http://localhost:8080/api/v1/health 2>/dev/null || echo "{}")
+          APP_VER=$(echo "$HEALTH_RESP" | jq -r '.version // empty' 2>/dev/null)
           echo "App version: $APP_VER"
           if [ -z "$APP_VER" ] || echo "$APP_VER" | grep -qE "^(0\.0\.0|unknown)"; then
             echo "WARN: app version is '$APP_VER' — expected a real version (e.g. 0.12.5)"
