@@ -71,7 +71,8 @@ Libs: -L${libdir} -lshaderc_combined
 Libs.private: -lstdc++ -lm -lpthread
 Cflags: -I${prefix}/include
 PCEOF
-    && ln -sf shaderc.pc /usr/lib/aarch64-linux-gnu/pkgconfig/spirv_library.pc \
+
+RUN ln -sf shaderc.pc /usr/lib/aarch64-linux-gnu/pkgconfig/spirv_library.pc \
     && echo "--- shaderc.pc (combined static) ---" \
     && cat /usr/lib/aarch64-linux-gnu/pkgconfig/shaderc.pc \
     && echo "--- combined lib check ---" \
