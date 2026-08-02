@@ -28,7 +28,7 @@ RUN echo "deb http://deb.debian.org/debian bookworm main contrib non-free non-fr
         >> /etc/apt/sources.list \
     && rm -f /etc/apt/sources.list.d/debian.sources
 
-# Core build deps (including Vulkan, OpenCL, libnuma)
+# Core build deps (including Vulkan, libnuma)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     wget gpg lsb-release gnupg \
     cmake make git autoconf automake libtool pkg-config \
@@ -38,7 +38,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libavcodec-dev \
     libjpeg62-turbo-dev \
     libssl-dev \
-    libvulkan-dev ocl-icd-opencl-dev libnuma-dev \
+    libvulkan-dev libnuma-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # Vulkan headers >= 1.3.277 required by FFmpeg 8.1.2 (bookworm ships 1.3.239).
@@ -156,8 +156,8 @@ RUN echo "=== pkg-config checks ===" \
 # Build with --enable-static --disable-shared: FFmpeg's own libs (.a) and
 # SVT-AV1 (.a) are statically linked into the binary.  External codec .so
 # files (libx264, libx265, libvpx, libfdk-aac) are still dynamically linked
-# and must be present at runtime.  Vulkan and OpenCL are loaded at runtime
-# via dlopen — no link-time dependency.
+# and must be present at runtime.  Vulkan is loaded at runtime via dlopen —
+# no link-time dependency.
 RUN (./configure \
     --prefix=/usr/local \
     --cc=clang --cxx=clang++ \
@@ -171,7 +171,6 @@ RUN (./configure \
     --enable-libfdk-aac \
     --enable-openssl \
     --enable-vulkan \
-    --enable-opencl \
     --enable-protocol=file \
     --enable-protocol=pipe \
     --enable-protocol=tcp \
@@ -201,8 +200,8 @@ ENV DEBIAN_FRONTEND=noninteractive
 
 # Runtime deps: minimal — ffmpeg is statically linked against FFmpeg core and
 # SVT-AV1.  External codec .so files (libx264, libx265, libvpx, libfdk-aac)
-# and basic libs are needed.  Vulkan and OpenCL ICD loaders are NOT needed —
-# ffmpeg loads them via dlopen.
+# and basic libs are needed.  Vulkan ICD loaders are NOT needed — ffmpeg
+# loads them via dlopen.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libgcc-s1 libstdc++6 curl ca-certificates \
     && rm -rf /var/lib/apt/lists/*
@@ -221,7 +220,7 @@ RUN ldconfig
 ENV PATH=/usr/local/bin:${PATH}
 
 LABEL org.opencontainers.image.title="hometimeline-base" \
-      org.opencontainers.image.description="FFmpeg optimised for Snapdragon 8cx Gen 3 — ARM64 Cortex-A78C (Vulkan + OpenCL GPU filters)" \
+      org.opencontainers.image.description="FFmpeg optimised for Snapdragon 8cx Gen 3 — ARM64 Cortex-A78C (Vulkan GPU acceleration)" \
       org.opencontainers.image.source="https://github.com/dk307/arm64dockers" \
       org.opencontainers.image.licenses="MIT"
 
