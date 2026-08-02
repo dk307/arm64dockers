@@ -39,7 +39,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libjpeg62-turbo-dev \
     libssl-dev \
     libvulkan-dev libshaderc-dev ocl-icd-opencl-dev libnuma-dev \
-    libglslang-dev \
+    glslang-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # Vulkan headers >= 1.3.277 required by FFmpeg 8.1.2 (bookworm ships 1.3.239).
