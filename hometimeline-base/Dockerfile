@@ -142,8 +142,17 @@ ENV PKG_CONFIG_PATH=/usr/local/lib/pkgconfig:/usr/lib/aarch64-linux-gnu/pkgconfi
 # Debug: verify pkg-config can find all required libraries
 RUN echo "=== pkg-config checks ===" \
     && pkg-config --modversion shaderc \
-    && pkg-config --modversion vulkan \
-    && pkg-config --modversion libavcodec \
+    && pkg-config --cflags shaderc \
+    && pkg-config --libs shaderc \
+    && echo "--- static flags ---" \
+    && pkg-config --static --cflags shaderc 2>&1 \
+    && pkg-config --static --libs shaderc 2>&1 \
+    && echo "--- shaderc.pc content ---" \
+    && cat /usr/lib/aarch64-linux-gnu/pkgconfig/shaderc.pc \
+    && echo "--- glslang check ---" \
+    && pkg-config --modversion glslang 2>&1 || true \
+    && echo "--- shaderc lib files ---" \
+    && ls -la /usr/lib/aarch64-linux-gnu/libshaderc* 2>&1 \
     && echo "=== All pkg-config checks passed ==="
 
 # Build with --enable-static --disable-shared: FFmpeg's own libs (.a) and
