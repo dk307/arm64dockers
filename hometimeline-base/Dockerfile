@@ -143,24 +143,17 @@ WORKDIR /src/ffmpeg
 # can find our local libs (SVT-AV1) AND system libs (shaderc, vulkan, etc.)
 ENV PKG_CONFIG_PATH=/usr/local/lib/pkgconfig:/usr/lib/aarch64-linux-gnu/pkgconfig
 
-# Debug: verify pkg-config can find all required libraries
-# FFmpeg 8.x looks for pkg-config name "spirv_library" (not "shaderc")
+# Debug: verify pkg-config finds shaderc (FFmpeg uses it via name "shaderc")
 RUN echo "=== pkg-config checks ===" \
-    && pkg-config --modversion spirv_library \
-    && pkg-config --static --libs spirv_library \
-    && echo "--- spirv_library.pc content ---" \
-    && cat /usr/lib/aarch64-linux-gnu/pkgconfig/spirv_library.pc \
-    && echo "--- glslang check ---" \
-    && pkg-config --modversion glslang 2>&1 || true \
-    && echo "--- shaderc lib files ---" \
-    && ls -la /usr/lib/aarch64-linux-gnu/libshaderc* 2>&1 \
-    && echo "--- simulate FFmpeg configure check ---" \
-    && pkg-config --atleast-version="2019.1" --static spirv_library \
-    && echo "--- check header + function ---" \
-    && echo '#include <shaderc/shaderc.h>' > /tmp/shaderc_test.c \
-    && echo 'int main() { shaderc_compiler_initialize(); return 0; }' >> /tmp/shaderc_test.c \
-    && gcc -I$(pkg-config --cflags-only-I spirv_library | sed 's/-I//g') /tmp/shaderc_test.c $(pkg-config --libs spirv_library) -o /tmp/shaderc_test && echo "compile+link OK" \
-    && echo "=== All pkg-config checks passed ==="
+    && pkg-config --exists --print-errors "shaderc >= 2019.1" \
+    && pkg-config --modversion shaderc \
+    && pkg-config --cflags --static shaderc \
+    && pkg-config --libs --static shaderc \
+    && echo "--- shaderc.pc ---" \
+    && cat /usr/lib/aarch64-linux-gnu/pkgconfig/shaderc.pc \
+    && echo "--- shaderc libs ---" \
+    && ls -la /usr/lib/aarch64-linux-gnu/libshaderc* \
+    && echo "=== shaderc pkg-config OK ==="
 
 # Build with --enable-static --disable-shared: FFmpeg's own libs (.a) and
 # SVT-AV1 (.a) are statically linked into the binary.  External codec .so
