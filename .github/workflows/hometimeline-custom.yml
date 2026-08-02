@@ -112,13 +112,16 @@ jobs:
           context: ./hometimeline-src
           file: ./hometimeline-src/docker/Dockerfile
           target: app-custom-ffmpeg
+          platforms: linux/arm64
           push: false
           load: true
           tags: ${{ env.IMAGE_NAME }}:test
           build-contexts: |
             ffmpeg-source=docker-image://ghcr.io/dk307/hometimeline-base:latest
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          build-args: |
+            TARGETARCH=arm64
+          cache-from: type=gha,scope=hometimeline-custom-${{ steps.tag.outputs.tag }}
+          cache-to: type=gha,mode=max,scope=hometimeline-custom-${{ steps.tag.outputs.tag }}
 
       # ── Smoke tests ──────────────────────────────────────────
 
@@ -171,9 +174,33 @@ jobs:
           docker logs hometimeline-test
           exit 1
 
-      - name: Test 3 — ffmpeg binary (custom build)
+      - name: Test 3 — diagnostics (container contents)
         run: |
-          echo "=== Test 3: ffmpeg binary ==="
+          echo "=== Container diagnostics ==="
+          echo "--- Architecture ---"
+          docker exec hometimeline-test uname -m || echo "uname failed"
+          echo "--- /usr/local/bin/ contents ---"
+          docker exec hometimeline-test ls -la /usr/local/bin/ || echo "ls failed"
+          echo "--- ffmpeg file info ---"
+          docker exec hometimeline-test file /usr/local/bin/ffmpeg 2>&1 || echo "file check failed"
+          echo "--- ffmpeg in PATH? ---"
+          docker exec hometimeline-test which ffmpeg 2>&1 || echo "which: not found"
+          echo "--- /usr/local/lib/libsvtav1 ---"
+          docker exec hometimeline-test ls -la /usr/local/lib/libsvtav1* 2>&1 || echo "not found"
+          echo "--- /usr/lib/aarch64-linux-gnu/libavcodec ---"
+          docker exec hometimeline-test ls -la /usr/lib/aarch64-linux-gnu/libavcodec* 2>&1 || echo "not found"
+          echo "--- /usr/lib/aarch64-linux-gnu/libx264 ---"
+          docker exec hometimeline-test ls -la /usr/lib/aarch64-linux-gnu/libx264* 2>&1 || echo "not found"
+          echo "--- LD_LIBRARY_PATH ---"
+          docker exec hometimeline-test env | grep -i ld || echo "not set"
+          echo "--- ldd ffmpeg ---"
+          docker exec hometimeline-test ldd /usr/local/bin/ffmpeg 2>&1 | head -20 || echo "ldd failed"
+          echo "--- /app contents ---"
+          docker exec hometimeline-test ls /app/ 2>&1 | head -10 || echo "not found"
+
+      - name: Test 4 — ffmpeg binary (custom build)
+        run: |
+          echo "=== Test 4: ffmpeg binary ==="
           OUTPUT=$(docker exec hometimeline-test ffmpeg -version 2>&1)
           echo "$OUTPUT" | head -5
 
@@ -183,9 +210,9 @@ jobs:
           fi
           echo "PASS: ffmpeg binary OK"
 
-      - name: Test 4 — go2rtc binary
+      - name: Test 5 — go2rtc binary
         run: |
-          echo "=== Test 4: go2rtc binary ==="
+          echo "=== Test 5: go2rtc binary ==="
           OUTPUT=$(docker exec hometimeline-test go2rtc --version 2>&1 || true)
           if [ -z "$OUTPUT" ]; then
             echo "WARN: go2rtc not responding (may need config), checking binary exists"
@@ -194,9 +221,9 @@ jobs:
           echo "PASS: go2rtc binary present"
           echo "$OUTPUT" | head -3
 
-      - name: Test 5 — Python app loads
+      - name: Test 6 — Python app loads
         run: |
-          echo "=== Test 5: Python app ==="
+          echo "=== Test 6: Python app ==="
           OUTPUT=$(docker exec hometimeline-test python -c "import app.main; print('app module OK')" 2>&1)
           echo "$OUTPUT"
           if ! echo "$OUTPUT" | grep -q "app module OK"; then
