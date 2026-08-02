@@ -9,12 +9,13 @@
 
 ARG FFMPEG_VERSION=8.1.2
 ARG SVTAV1_VERSION=4.2.0
-ARG CLANG_VERSION=21
 
 # ---------------------------------------------------------------------------
 # Stage 1: Build dependencies
 # ---------------------------------------------------------------------------
 FROM --platform=linux/arm64 debian:bookworm AS deps
+
+ARG CLANG_VERSION=21
 
 ENV DEBIAN_FRONTEND=noninteractive
 
@@ -44,19 +45,30 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN wget -qO /tmp/llvm-snapshot.gpg.key https://apt.llvm.org/llvm-snapshot.gpg.key \
     && gpg --dearmor < /tmp/llvm-snapshot.gpg.key > /usr/share/keyrings/llvm-snapshot.gpg \
     && rm /tmp/llvm-snapshot.gpg.key \
-    && echo "deb [signed-by=/usr/share/keyrings/llvm-snapshot.gpg] http://apt.llvm.org/bookworm/ llvm-toolchain-bookworm-21 main" \
+    && echo "deb [signed-by=/usr/share/keyrings/llvm-snapshot.gpg] http://apt.llvm.org/bookworm/ llvm-toolchain-bookworm-${CLANG_VERSION} main" \
         > /etc/apt/sources.list.d/llvm-21.list \
     && apt-get update \
     && apt-get install -y --no-install-recommends \
-        clang-21 lld-21 llvm-21 libomp-21-dev \
+        clang-${CLANG_VERSION} lld-${CLANG_VERSION} llvm-${CLANG_VERSION} libomp-${CLANG_VERSION}-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Symlink clang versioned binaries so the rest of the Dockerfile can use
-# plain "clang" / "clang++" / "lld" / "llvm-strip".
-RUN ln -sf /usr/bin/clang-${CLANG_VERSION} /usr/bin/clang \
-    && ln -sf /usr/bin/clang++-${CLANG_VERSION} /usr/bin/clang++ \
-    && ln -sf /usr/bin/lld-${CLANG_VERSION} /usr/bin/lld \
-    && ln -sf /usr/bin/llvm-strip-${CLANG_VERSION} /usr/bin/llvm-strip
+# Add LLVM bin to PATH and create convenience symlinks
+RUN LLVM_DIR=$(ls -d /usr/lib/llvm-* 2>/dev/null | head -1) \
+    && echo "LLVM install dir: $LLVM_DIR" \
+    && for bin in clang clang++ lld ld.lld llvm-strip llvm-ar; do \
+        target="/usr/bin/${bin}-${CLANG_VERSION}"; \
+        if [ ! -f "$target" ]; then \
+            alt=$(find "$LLVM_DIR/bin" -name "${bin}-${CLANG_VERSION}" -type f 2>/dev/null | head -1); \
+            [ -n "$alt" ] && target="$alt"; \
+        fi; \
+        [ -f "$target" ] && ln -sf "$target" "/usr/bin/${bin}"; \
+    done \
+    && ln -sf "$LLVM_DIR/bin/clang" /usr/bin/clang 2>/dev/null || true \
+    && ln -sf "$LLVM_DIR/bin/clang++" /usr/bin/clang++ 2>/dev/null || true \
+    && ln -sf "$LLVM_DIR/bin/lld" /usr/bin/lld 2>/dev/null || true \
+    && ln -sf "$LLVM_DIR/bin/llvm-strip" /usr/bin/llvm-strip 2>/dev/null || true \
+    && ln -sf "$LLVM_DIR/bin/llvm-ar" /usr/bin/llvm-ar 2>/dev/null || true \
+    && which clang && clang --version
 
 # ---------------------------------------------------------------------------
 # Stage 2: Build SVT-AV1 from source (not in Debian repos)
