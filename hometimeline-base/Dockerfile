@@ -211,13 +211,21 @@ FROM --platform=linux/arm64 debian:bookworm AS runtime
 
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Runtime deps: libshaderc1 + libglslang1 (libshaderc.so has unresolved
-# symbols in libglang/libSPIRV-Tools).  Vulkan and OpenCL ICD loaders are
-# NOT needed — ffmpeg loads them via dlopen from the host system.
+# Runtime deps: libshaderc1 (linked by ffmpeg for Vulkan SPIR-V compilation).
+# libshaderc.so has unresolved symbols in libglslang and libSPIRV-Tools, so
+# copy those .so files from the deps stage.  Vulkan and OpenCL ICD loaders
+# are NOT needed — ffmpeg loads them via dlopen from the host system.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libgcc-s1 libstdc++6 curl ca-certificates \
-    libshaderc1 libglslang1 \
+    libshaderc1 \
     && rm -rf /var/lib/apt/lists/*
+
+# Copy glslang + SPIRV-Tools runtime libs that libshaderc.so depends on.
+# Debian's libshaderc.so has undefined glslang/SPIRV-Tools symbols.
+# These come from libglslang-dev in the deps stage.
+COPY --from=deps /usr/lib/aarch64-linux-gnu/libglslang.so* \
+                  /usr/lib/aarch64-linux-gnu/libSPIRV*.so* \
+                  /usr/lib/aarch64-linux-gnu/
 
 # FFmpeg binaries (statically linked against FFmpeg core + SVT-AV1; dynamic for codec .so)
 COPY --from=ffmpeg /usr/local/bin/ffmpeg /usr/local/bin/ffmpeg
