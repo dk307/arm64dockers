@@ -674,9 +674,23 @@ Optimised FFmpeg + ffprobe base image for the Snapdragon 8cx Gen 3 (SC8280XP). P
 | hls | Yes |
 | https | Yes |
 
-### 10.7 CMake / Configure flags (exact)
+### 10.7 GPU Acceleration (Vulkan + OpenCL)
 
-**SVT-AV1 (built from source):**
+**Vulkan filters:** dlopen'd at runtime (no link-time dep). Requires Vulkan ≥ 1.3.277 headers — bookworm ships 1.3.239, so headers are installed from `KhronosGroup/Vulkan-Headers` (`vulkan-sdk-1.4.357.0`) and `vulkan.pc` is patched.
+
+**OpenCL filters:** dlopen'd at runtime (no link-time dep). Built via `ocl-icd-opencl-dev`.
+
+**libshaderc:** SPIR-V shader compiler, linked at build time (`--enable-libshaderc`). Runtime dep: `libshaderc1` (installed in runtime stage). Required by most Vulkan filters (blend, gblur, nlmeans, overlay, scale, etc.).
+
+| Feature | Build dep | Link-time dep | Runtime dep |
+|---------|-----------|---------------|-------------|
+| Vulkan filters | `libvulkan-dev` + headers ≥ 1.3.277 | No (dlopen) | None in container |
+| OpenCL filters | `ocl-icd-opencl-dev` | No (dlopen) | None in container |
+| libshaderc | `libshaderc-dev` | Yes (`libshaderc_shared.so`) | `libshaderc1` |
+
+### 10.8 CMake / Configure flags (exact)
+
+**SVT-AV1 (built from source, static):**
 ```cmake
 CMAKE_BUILD_TYPE=Release
 CMAKE_C_COMPILER=clang
@@ -684,7 +698,8 @@ CMAKE_CXX_COMPILER=clang++
 CMAKE_C_FLAGS=<same as CXX>
 CMAKE_CXX_FLAGS=<same as CXX>
 CMAKE_EXE_LINKER_FLAGS=-flto=thin
-BUILD_SHARED_LIBS=ON
+BUILD_SHARED_LIBS=OFF
+USE_NUMA=OFF
 BUILD_APPS=OFF
 BUILD_DEC=ON
 ```
@@ -699,21 +714,21 @@ BUILD_DEC=ON
   --cc=clang --cxx=clang++ \
   --enable-gpl --enable-nonfree --enable-version3 \
   --enable-libx264 --enable-libx265 --enable-libvpx \
-  --enable-libsvtav1 --enable-libfdk-aac --enable-libopus \
-  --enable-vulkan \
+  --enable-libsvtav1 --enable-libfdk-aac \
   --enable-openssl \
+  --enable-vulkan --enable-libshaderc --enable-opencl \
   --enable-protocol=file --enable-protocol=pipe \
   --enable-protocol=tcp --enable-protocol=rtsp \
   --enable-protocol=rtmp --enable-protocol=hls \
   --enable-protocol=https \
-  --enable-shared --disable-static \
+  --enable-static --disable-shared \
   --disable-doc \
   --extra-cflags="${CFLAGS}" \
   --extra-cxxflags="${CFLAGS}" \
   --extra-ldflags="-flto=thin"
 ```
 
-### 10.8 CFLAGS (exact)
+### 10.9 CFLAGS (exact)
 
 ```
 -O3 -march=armv8.2-a+dotprod+fp16+fp16fml+rcpc -mtune=cortex-a78c
@@ -727,11 +742,11 @@ BUILD_DEC=ON
 - **ThinLTO (`-flto=thin`)** is production standard across all containers.
 - **Clang is mandatory** — matches llama-cpp and yolo-rest containers.
 
-### 10.9 Dockerfile
+### 10.10 Dockerfile
 
 **File:** `hometimeline-base/Dockerfile`
 
-Four-stage build: install deps → build SVT-AV1 → build FFmpeg → slim runtime.
+Four-stage build: install deps (including Vulkan headers from source) → build SVT-AV1 (static) → build FFmpeg (static) → slim runtime.
 
 **Build-time configuration:**
 ```bash
@@ -745,7 +760,7 @@ docker build --build-arg FFMPEG_VERSION=8.1.2 -t hometimeline-base:local ./homet
 docker build --build-arg SVTAV1_VERSION=3.0.2 -t hometimeline-base:local ./hometimeline-base
 ```
 
-### 10.10 Usage pattern (downstream COPY --from)
+### 10.11 Usage pattern (downstream COPY --from)
 
 ```dockerfile
 FROM ghcr.io/dk307/hometimeline-base:latest AS ffmpeg
@@ -760,14 +775,14 @@ COPY --from=ffmpeg /usr/local/lib/ /usr/local/lib/
 ENV LD_LIBRARY_PATH=/usr/local/lib:${LD_LIBRARY_PATH}
 ```
 
-### 10.11 Tag Policy
+### 10.12 Tag Policy
 
 | Tag | Behavior |
 |-----|----------|
 | `:ffmpeg-8.1.2` | Pinned FFmpeg version (overwrites on rebuild) |
 | `:latest` | Most recent build |
 
-### 10.12 CI/CD
+### 10.13 CI/CD
 
 **Workflow:** `.github/workflows/hometimeline-base.yml`
 **Triggers:** Weekly cron (Monday 02:00 UTC) + push to Dockerfile + manual dispatch

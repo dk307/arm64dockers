@@ -28,7 +28,7 @@ RUN echo "deb http://deb.debian.org/debian bookworm main contrib non-free non-fr
         >> /etc/apt/sources.list \
     && rm -f /etc/apt/sources.list.d/debian.sources
 
-# Core build deps
+# Core build deps (including Vulkan, OpenCL, libshaderc, libnuma)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     wget gpg lsb-release gnupg \
     cmake make git autoconf automake libtool pkg-config \
@@ -38,7 +38,21 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libavcodec-dev \
     libjpeg62-turbo-dev \
     libssl-dev \
+    libvulkan-dev libshaderc-dev ocl-icd-opencl-dev libnuma-dev \
     && rm -rf /var/lib/apt/lists/*
+
+# Vulkan headers >= 1.3.277 required by FFmpeg 8.1.2 (bookworm ships 1.3.239).
+# Install from Khronos official headers and patch vulkan.pc version.
+ARG VULKAN_HEADERS_VERSION=vulkan-sdk-1.4.357.0
+RUN git clone --depth 1 --branch ${VULKAN_HEADERS_VERSION} \
+    https://github.com/KhronosGroup/Vulkan-Headers.git /tmp/vulkan-headers \
+    && cp -r /tmp/vulkan-headers/include/vulkan/* /usr/include/vulkan/ \
+    && VULKAN_VER=$(grep '#define VK_HEADER_VERSION_COMPLETE' /usr/include/vulkan/vulkan_core.h \
+        | sed 's/.*VK_MAKE_API_VERSION(0, \([0-9]*\), \([0-9]*\), VK_HEADER_VERSION)/\1.\2/') \
+    && sed -i "s/^Version:.*/Version: ${VULKAN_VER}/" /usr/lib/aarch64-linux-gnu/pkgconfig/vulkan.pc \
+    && echo "Vulkan headers installed: ${VULKAN_VER} (from ${VULKAN_HEADERS_VERSION})" \
+    && pkg-config --modversion vulkan \
+    && rm -rf /tmp/vulkan-headers
 
 # LLVM 21 from official apt repo
 RUN wget -qO /tmp/llvm-snapshot.gpg.key https://apt.llvm.org/llvm-snapshot.gpg.key \
@@ -125,9 +139,9 @@ ENV PKG_CONFIG_PATH=/usr/local/lib/pkgconfig
 
 # Build with --enable-static --disable-shared: FFmpeg's own libs (.a) and
 # SVT-AV1 (.a) are statically linked into the binary.  External codec .so
-# files (libx264, libx265, libvpx, libfdk-aac) are still dynamically linked
-# and must be present at runtime.  This is the layout the upstream
-# HomeTimeline Dockerfile expects.
+# files (libx264, libx265, libvpx, libfdk-aac, libshaderc) are still
+# dynamically linked and must be present at runtime.  Vulkan and OpenCL are
+# loaded at runtime via dlopen — no link-time dependency.
 RUN ./configure \
     --prefix=/usr/local \
     --cc=clang --cxx=clang++ \
@@ -140,6 +154,9 @@ RUN ./configure \
     --enable-libsvtav1 \
     --enable-libfdk-aac \
     --enable-openssl \
+    --enable-vulkan \
+    --enable-libshaderc \
+    --enable-opencl \
     --enable-protocol=file \
     --enable-protocol=pipe \
     --enable-protocol=tcp \
@@ -163,8 +180,12 @@ FROM --platform=linux/arm64 debian:bookworm AS runtime
 
 ENV DEBIAN_FRONTEND=noninteractive
 
+# Runtime deps: libshaderc1 (linked by ffmpeg for Vulkan SPIR-V compilation).
+# Vulkan and OpenCL ICD loaders are NOT needed here — ffmpeg loads them via
+# dlopen at runtime from the host system.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libgcc-s1 libstdc++6 curl ca-certificates \
+    libshaderc1 \
     && rm -rf /var/lib/apt/lists/*
 
 # FFmpeg binaries (statically linked against FFmpeg core + SVT-AV1; dynamic for codec .so)
@@ -180,7 +201,7 @@ RUN ldconfig
 ENV PATH=/usr/local/bin:${PATH}
 
 LABEL org.opencontainers.image.title="hometimeline-base" \
-      org.opencontainers.image.description="FFmpeg optimised for Snapdragon 8cx Gen 3 — ARM64 Cortex-A78C" \
+      org.opencontainers.image.description="FFmpeg optimised for Snapdragon 8cx Gen 3 — ARM64 Cortex-A78C (Vulkan + OpenCL GPU filters)" \
       org.opencontainers.image.source="https://github.com/dk307/arm64dockers" \
       org.opencontainers.image.licenses="MIT"
 

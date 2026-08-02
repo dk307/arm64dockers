@@ -199,23 +199,41 @@ jobs:
           done
           echo "PASS: All required protocols present"
 
-      - name: Test 5 — ARM64 build verification
+      - name: Test 5 — Build config (GPL, codecs, GPU acceleration)
         if: steps.check.outputs.skip != 'true'
         run: |
-          echo "=== Test 5: ARM64 build config ==="
+          echo "=== Test 5: Build config ==="
           CONFIG=$(docker exec ffmpeg-test ffmpeg -buildconf 2>&1)
           echo "$CONFIG" | grep -i "arm\|aarch\|neon" | head -5
 
-          if ! echo "$CONFIG" | grep -q "enable-gpl"; then
-            echo "FAIL: GPL not enabled"
-            exit 1
-          fi
-          echo "PASS: GPL enabled"
-          if ! echo "$CONFIG" | grep -q "enable-libx264"; then
-            echo "FAIL: libx264 not in build config"
-            exit 1
-          fi
-          echo "PASS: libx264 in build config"
+          for FLAG in enable-gpl enable-libx264 enable-libx265 enable-libvpx \
+                      enable-libsvtav1 enable-libfdk-aac enable-openssl \
+                      enable-vulkan enable-libshaderc enable-opencl; do
+            if ! echo "$CONFIG" | grep -q "$FLAG"; then
+              echo "FAIL: $FLAG not in build config"
+              exit 1
+            fi
+            echo "  PASS: $FLAG"
+          done
+          echo "PASS: All build config flags present"
+
+      - name: Test 6 — GPU filters listed
+        if: steps.check.outputs.skip != 'true'
+        run: |
+          echo "=== Test 6: GPU filters ==="
+          FILTERS=$(docker exec ffmpeg-test ffmpeg -filters 2>/dev/null)
+
+          for FILTER in scale_vulkan overlay_vulkan blend_vulkan nlmeans_vulkan \
+                        gblur_vulkan chromakey_vulkan colorkey_vulkan \
+                        unsharp_opencl overlay_opencl sobel_opencl \
+                        boxblur_opencl erode_opencl dilate_opencl; do
+            if echo "$FILTERS" | grep -q "$FILTER"; then
+              echo "  PASS: $FILTER available"
+            else
+              echo "  WARN: $FILTER not listed (may need GPU at runtime)"
+            fi
+          done
+          echo "PASS: GPU filter build verification complete"
 
       - name: Stop container
         if: always() && steps.check.outputs.skip != 'true'

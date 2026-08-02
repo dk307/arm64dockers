@@ -91,27 +91,28 @@ jobs:
           echo "..."
           echo ""
 
-      - name: Patch upstream Dockerfile (add libnuma1 for libx265)
+      - name: Patch upstream Dockerfile (add libnuma1 + libshaderc COPY)
         run: |
           echo "=== Patching upstream Dockerfile ==="
-          # libx265 depends on libnuma1, which isn't pulled in by apt ffmpeg
-          # in the app-custom-ffmpeg target.  Insert libnuma1 install before
-          # the final ldconfig in the app-custom-ffmpeg target.
-          #
-          # The Dockerfile has two "RUN ldconfig" lines.  The first is after
-          # the libsvtav1 copy; the second is after all codec copies.
-          # We insert before the second one.
           cd hometimeline-src
+          # 1) libx265 depends on libnuma1 — insert install before 2nd ldconfig
+          # 2) ffmpeg links libshaderc_shared.so — add COPY from ffmpeg-source
           awk '
             /^RUN ldconfig$/ { count++ }
-            count == 2 && !pasted {
+            count == 2 && !pasted_numa {
               print "RUN apt-get update \&\& apt-get install -y --no-install-recommends libnuma1 \&\& rm -rf /var/lib/apt/lists/*"
-              pasted = 1
+              pasted_numa = 1
+            }
+            /^COPY --from=ffmpeg-source.*libvpx/ && !pasted_shaderc {
+              print
+              print "COPY --from=ffmpeg-source /usr/lib/aarch64-linux-gnu/libshaderc_shared.so* /usr/lib/aarch64-linux-gnu/"
+              pasted_shaderc = 1
+              next
             }
             { print }
           ' docker/Dockerfile > docker/Dockerfile.tmp && mv docker/Dockerfile.tmp docker/Dockerfile
-          echo "Patched Dockerfile (libnuma1 in app-custom-ffmpeg):"
-          grep -n "libnuma\|ldconfig" docker/Dockerfile
+          echo "Patched Dockerfile:"
+          grep -n "libnuma\|libshaderc\|ldconfig" docker/Dockerfile
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3

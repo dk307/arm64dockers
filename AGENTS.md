@@ -183,16 +183,19 @@ CI smoke tests verify: health endpoint, HEALTHCHECK status, /models listing, det
 
 **Image:** `ghcr.io/dk307/hometimeline-base`
 **Purpose:** FFmpeg optimised for Snapdragon 8cx Gen 3 — base layer for downstream video containers
-**Codecs:** libx264, libx265, libvpx, libsvtav1, libfdk-aac, libopus, libjpeg-turbo, Vulkan
+**Codecs:** libx264, libx265, libvpx, libsvtav1, libfdk-aac, libopus, libjpeg-turbo
+**GPU:** Vulkan filters (dlopen), OpenCL filters (dlopen), libshaderc (linked)
 **No EXPOSE, no ENTRYPOINT** — pure base layer for `COPY --from`
 
 #### Key build facts
 
 - **Compiler:** Clang 21+ (same as other containers)
 - **FFmpeg:** Release tag `n8.1.2` — tags only, no GitHub Releases
-- **SVT-AV1:** Built from source (not in Debian repos) — tracked separately
+- **SVT-AV1:** Built from source as **static** (`BUILD_SHARED_LIBS=OFF`), no NUMA — eliminates libSvtAv1Enc.so and libnuma.so runtime deps
 - **Base OS:** Debian bookworm (matches python:3.14-slim glibc for upstream compat)
-- **Vulkan:** Enabled (experimental, Adreno 690)
+- **Vulkan:** `--enable-vulkan` with Vulkan headers from `vulkan-sdk-1.4.357.0` (bookworm ships 1.3.239, FFmpeg needs ≥1.3.277). dlopen'd at runtime, no link-time dependency.
+- **OpenCL:** `--enable-opencl` via ocl-icd-opencl-dev. dlopen'd at runtime, no link-time dependency.
+- **libshaderc:** `--enable-libshaderc` links `libshaderc_shared.so` at build time. Runtime dep: `libshaderc1`.
 - **Weekly cron** (Monday 02:00 UTC) — FFmpeg releases ~monthly, daily check unnecessary
 
 #### CFLAGS (exact — identical to llama-cpp and yolo-rest)
