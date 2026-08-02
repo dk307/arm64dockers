@@ -18,8 +18,13 @@ FROM --platform=linux/arm64 debian:bookworm AS deps
 
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Enable non-free for libfdk-aac-dev
-RUN sed -i 's/^deb /deb contrib non-free non-free-firmware /' /etc/apt/sources.list
+# Enable non-free for libfdk-aac-dev (DEB822 format on bookworm)
+RUN if [ -f /etc/apt/sources.list.d/debian.sources ]; then \
+        sed -i 's/^Components: main$/Components: main contrib non-free non-free-firmware/' \
+            /etc/apt/sources.list.d/debian.sources; \
+    else \
+        sed -i 's/^deb /deb contrib non-free non-free-firmware /' /etc/apt/sources.list; \
+    fi
 
 # LLVM 21 from the official apt repo
 RUN apt-get update && apt-get install -y --no-install-recommends \
