@@ -286,14 +286,14 @@ jobs:
           print(json.dumps(build))
           " 2>&1)
           echo "$RESP" | jq . 2>/dev/null || echo "$RESP"
-          GIT_SHA_API=$(echo "$RESP" | jq -r '.git_sha' 2>/dev/null)
-          BUILD_TIME_API=$(echo "$RESP" | jq -r '.build_time' 2>/dev/null)
-          if [ "$GIT_SHA_API" = "unknown" ] || [ -z "$GIT_SHA_API" ]; then
-            echo "FAIL: system_info git_sha is unknown"
+          GIT_SHA_API=$(echo "$RESP" | jq -r '.git_sha // empty' 2>/dev/null)
+          BUILD_TIME_API=$(echo "$RESP" | jq -r '.build_time // empty' 2>/dev/null)
+          if [ -z "$GIT_SHA_API" ] || [ "$GIT_SHA_API" = "unknown" ]; then
+            echo "FAIL: system_info git_sha is missing or unknown"
             exit 1
           fi
-          if [ "$BUILD_TIME_API" = "unknown" ] || [ -z "$BUILD_TIME_API" ]; then
-            echo "FAIL: system_info build_time is unknown"
+          if [ -z "$BUILD_TIME_API" ] || [ "$BUILD_TIME_API" = "unknown" ]; then
+            echo "FAIL: system_info build_time is missing or unknown"
             exit 1
           fi
           echo "PASS: system_info build metadata OK"
