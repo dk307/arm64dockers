@@ -135,7 +135,16 @@ RUN git clone --depth 1 --branch n${FFMPEG_VERSION} \
 
 WORKDIR /src/ffmpeg
 
-ENV PKG_CONFIG_PATH=/usr/local/lib/pkgconfig
+# Include both local and system pkg-config paths so FFmpeg's configure
+# can find our local libs (SVT-AV1) AND system libs (shaderc, vulkan, etc.)
+ENV PKG_CONFIG_PATH=/usr/local/lib/pkgconfig:/usr/lib/aarch64-linux-gnu/pkgconfig
+
+# Debug: verify pkg-config can find all required libraries
+RUN echo "=== pkg-config checks ===" \
+    && pkg-config --modversion shaderc \
+    && pkg-config --modversion vulkan \
+    && pkg-config --modversion libavcodec \
+    && echo "=== All pkg-config checks passed ==="
 
 # Build with --enable-static --disable-shared: FFmpeg's own libs (.a) and
 # SVT-AV1 (.a) are statically linked into the binary.  External codec .so
