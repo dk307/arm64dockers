@@ -90,7 +90,8 @@ RUN cmake -B build -DCMAKE_BUILD_TYPE=Release \
     -DCMAKE_C_FLAGS="${CFLAGS}" \
     -DCMAKE_CXX_FLAGS="${CFLAGS}" \
     -DCMAKE_EXE_LINKER_FLAGS="-flto=thin" \
-    -DBUILD_SHARED_LIBS=ON \
+    -DBUILD_SHARED_LIBS=OFF \
+    -DUSE_NUMA=OFF \
     -DBUILD_APPS=OFF \
     -DBUILD_DEC=ON \
     -DCMAKE_INSTALL_PREFIX=/usr/local \
@@ -111,6 +112,10 @@ COPY --from=svtav1 /usr/local/lib/ /usr/local/lib/
 COPY --from=svtav1 /usr/local/include/ /usr/local/include/
 COPY --from=svtav1 /usr/local/lib/pkgconfig/ /usr/local/lib/pkgconfig/
 
+# Create dummy libsvtav1.so.0 so upstream COPY --from=ffmpeg-source libsvtav1.so* succeeds.
+# The real SVT-AV1 is statically linked into ffmpeg — this file is never loaded.
+RUN touch /usr/local/lib/libsvtav1.so.0
+
 RUN git clone --depth 1 --branch n${FFMPEG_VERSION} \
     https://github.com/FFmpeg/FFmpeg.git /src/ffmpeg
 
@@ -118,9 +123,9 @@ WORKDIR /src/ffmpeg
 
 ENV PKG_CONFIG_PATH=/usr/local/lib/pkgconfig
 
-# Build with --enable-static --disable-shared: FFmpeg's own libs (.a) are
-# statically linked into the binary.  External codec .so files (libx264,
-# libx265, libvpx, libfdk-aac, libSvtAv1Enc) are still dynamically linked
+# Build with --enable-static --disable-shared: FFmpeg's own libs (.a) and
+# SVT-AV1 (.a) are statically linked into the binary.  External codec .so
+# files (libx264, libx265, libvpx, libfdk-aac) are still dynamically linked
 # and must be present at runtime.  This is the layout the upstream
 # HomeTimeline Dockerfile expects.
 RUN ./configure \
@@ -162,17 +167,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libgcc-s1 libstdc++6 curl ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-# FFmpeg binaries (statically linked against FFmpeg core; dynamic for codec .so)
+# FFmpeg binaries (statically linked against FFmpeg core + SVT-AV1; dynamic for codec .so)
 COPY --from=ffmpeg /usr/local/bin/ffmpeg /usr/local/bin/ffmpeg
 COPY --from=ffmpeg /usr/local/bin/ffprobe /usr/local/bin/ffprobe
 COPY --from=ffmpeg /usr/local/lib/ /usr/local/lib/
-
-# Create libsvtav1.so* symlink — upstream Dockerfile copies libsvtav1.so*
-# but SVT-AV1 4.x installs as libSvtAv1Enc.so*
-RUN cd /usr/local/lib && \
-    for f in libSvtAv1Enc.so*; do \
-        [ -e "$f" ] && ln -sf "$f" "libsvtav1.${f#libSvtAv1Enc}" 2>/dev/null; \
-    done
 
 # Codec shared libraries — needed by the upstream HomeTimeline Dockerfile
 COPY --from=ffmpeg /usr/lib/aarch64-linux-gnu/ /usr/lib/aarch64-linux-gnu/
