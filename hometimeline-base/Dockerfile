@@ -39,7 +39,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libjpeg62-turbo-dev \
     libssl-dev \
     libvulkan-dev libshaderc-dev ocl-icd-opencl-dev libnuma-dev \
-    glslang-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # Vulkan headers >= 1.3.277 required by FFmpeg 8.1.2 (bookworm ships 1.3.239).
@@ -56,17 +55,27 @@ RUN git clone --depth 1 --branch ${VULKAN_HEADERS_VERSION} \
     && rm -rf /tmp/vulkan-headers
 
 # FFmpeg 8.x uses pkg-config name "spirv_library" but test_pkg_config actually
-# queries package "shaderc" (first word of version string).  Debian's shaderc.pc
-# only has -lshaderc but libshaderc.so has unresolved symbols in libglslang
-# and libSPIRV-Tools.  Fix shaderc.pc to include transitive deps, then also
-# create spirv_library.pc as a symlink for any code path that uses it directly.
-# Use shared glslang (not --static) to avoid chasing transitive .a deps.
-RUN GLSLANG_LIBS=$(pkg-config --libs glslang 2>/dev/null || echo "-lglslang") \
-    && sed -i "s|^Libs:.*|Libs: -L\${libdir} -lshaderc ${GLSLANG_LIBS} -lstdc++ -lm|" \
-        /usr/lib/aarch64-linux-gnu/pkgconfig/shaderc.pc \
+# queries package "shaderc" (first word of version string).  Debian's
+# libshaderc.so has unresolved SPIRV-Tools symbols.  Override shaderc.pc to
+# link libshaderc_combined.a — a self-contained static archive that bundles
+# shaderc + SPIRV-Tools + glslang.  Also create spirv_library.pc symlink.
+RUN cat > /usr/lib/aarch64-linux-gnu/pkgconfig/shaderc.pc << 'PCEOF'
+prefix=/usr
+exec_prefix=${prefix}
+libdir=${exec_prefix}/lib/aarch64-linux-gnu
+
+Name: shaderc
+Description: Shaderc shader compiler library (combined static build)
+Version: 2023.2.1
+Libs: -L${libdir} -lshaderc_combined
+Libs.private: -lstdc++ -lm -lpthread
+Cflags: -I${prefix}/include
+PCEOF
     && ln -sf shaderc.pc /usr/lib/aarch64-linux-gnu/pkgconfig/spirv_library.pc \
-    && echo "--- shaderc.pc (fixed) ---" \
-    && cat /usr/lib/aarch64-linux-gnu/pkgconfig/shaderc.pc
+    && echo "--- shaderc.pc (combined static) ---" \
+    && cat /usr/lib/aarch64-linux-gnu/pkgconfig/shaderc.pc \
+    && echo "--- combined lib check ---" \
+    && ls -la /usr/lib/aarch64-linux-gnu/libshaderc_combined*
 
 # LLVM 21 from official apt repo
 RUN wget -qO /tmp/llvm-snapshot.gpg.key https://apt.llvm.org/llvm-snapshot.gpg.key \
@@ -154,15 +163,15 @@ WORKDIR /src/ffmpeg
 ENV PKG_CONFIG_PATH=/usr/local/lib/pkgconfig:/usr/lib/aarch64-linux-gnu/pkgconfig
 
 # Debug: verify pkg-config finds shaderc (FFmpeg uses it via name "shaderc")
+# shaderc.pc points to libshaderc_combined.a (self-contained static archive)
 RUN echo "=== pkg-config checks ===" \
     && pkg-config --exists --print-errors "shaderc >= 2019.1" \
     && pkg-config --modversion shaderc \
-    && pkg-config --cflags --static shaderc \
-    && pkg-config --libs --static shaderc \
+    && pkg-config --libs shaderc \
     && echo "--- shaderc.pc ---" \
     && cat /usr/lib/aarch64-linux-gnu/pkgconfig/shaderc.pc \
-    && echo "--- shaderc libs ---" \
-    && ls -la /usr/lib/aarch64-linux-gnu/libshaderc* \
+    && echo "--- combined lib check ---" \
+    && ls -la /usr/lib/aarch64-linux-gnu/libshaderc_combined* \
     && echo "=== shaderc pkg-config OK ==="
 
 # Build with --enable-static --disable-shared: FFmpeg's own libs (.a) and
@@ -212,23 +221,16 @@ FROM --platform=linux/arm64 debian:bookworm AS runtime
 
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Runtime deps: libshaderc1 (linked by ffmpeg for Vulkan SPIR-V compilation).
-# libshaderc.so has unresolved symbols in libglslang and libSPIRV-Tools, so
-# copy those .so files from the deps stage.  Vulkan and OpenCL ICD loaders
-# are NOT needed — ffmpeg loads them via dlopen from the host system.
+# Runtime deps: minimal — ffmpeg is statically linked against FFmpeg core,
+# SVT-AV1, and shaderc (via libshaderc_combined.a).  Only external codec
+# .so files (libx264, libx265, libvpx, libfdk-aac) and basic libs are needed.
+# Vulkan and OpenCL ICD loaders are NOT needed — ffmpeg loads them via dlopen.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libgcc-s1 libstdc++6 curl ca-certificates \
-    libshaderc1 \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy glslang + SPIRV-Tools runtime libs that libshaderc.so depends on.
-# Debian's libshaderc.so has undefined glslang/SPIRV-Tools symbols.
-# These come from libglslang-dev in the deps stage.
-COPY --from=deps /usr/lib/aarch64-linux-gnu/libglslang.so* \
-                  /usr/lib/aarch64-linux-gnu/libSPIRV*.so* \
-                  /usr/lib/aarch64-linux-gnu/
-
-# FFmpeg binaries (statically linked against FFmpeg core + SVT-AV1; dynamic for codec .so)
+# FFmpeg binaries (statically linked against FFmpeg core + SVT-AV1 + shaderc;
+# dynamic for codec .so: libx264, libx265, libvpx, libfdk-aac)
 COPY --from=ffmpeg /usr/local/bin/ffmpeg /usr/local/bin/ffmpeg
 COPY --from=ffmpeg /usr/local/bin/ffprobe /usr/local/bin/ffprobe
 COPY --from=ffmpeg /usr/local/lib/ /usr/local/lib/
