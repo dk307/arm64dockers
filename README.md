@@ -14,6 +14,7 @@ ARM64-only Docker containers built and published to GHCR. Single repo, automated
 | [`llama-cpp-embed-nomic`](#llama-cpp-embed-nomic) | [ggml-org/llama.cpp](https://github.com/ggml-org/llama.cpp) | nomic-embed-text embedding server | `b10224`, `latest` |
 | [`yolo-rest`](#yolo-rest) | [Tencent/ncnn](https://github.com/Tencent/ncnn) | YOLO object-detection REST server | `ncnn-20260526`, `latest` |
 | [`hometimeline-base`](#hometimeline-base) | [FFmpeg/FFmpeg](https://github.com/FFmpeg/FFmpeg) | FFmpeg optimised for ARM64 Cortex-A78C | `ffmpeg-8.1.2`, `latest` |
+| [`hometimeline-custom`](#hometimeline-custom) | [dk307/HomeTimeline](https://github.com/dk307/HomeTimeline) | HomeTimeline with optimised FFmpeg | `v0.12.5`, `latest` |
 
 ---
 
@@ -185,7 +186,7 @@ docker inspect --format='{{.State.Health.Status}}' yolo
 
 ### hometimeline-base
 
-FFmpeg optimised for the Snapdragon 8cx Gen 3 (Cortex-A78C). Built from source with Clang and ARM64-tuned flags. Includes libx264, libx265, libvpx, libsvtav1 (AV1), libfdk-aac, libopus, libjpeg-turbo, and Vulkan.
+FFmpeg optimised for the Snapdragon 8cx Gen 3 (Cortex-A78C). Built from source with Clang and ARM64-tuned flags. Includes libx264, libx265, libvpx, libsvtav1 (AV1), libfdk-aac, libopus, libjpeg-turbo, and Vulkan (dlopen'd at runtime).
 
 **No EXPOSE, no ENTRYPOINT** — this is a base image for `COPY --from` in downstream containers.
 
@@ -218,7 +219,7 @@ FROM debian:bookworm AS final
 COPY --from=ffmpeg /usr/local/bin/ffmpeg /usr/local/bin/ffmpeg
 COPY --from=ffmpeg /usr/local/bin/ffprobe /usr/local/bin/ffprobe
 COPY --from=ffmpeg /usr/local/lib/ /usr/local/lib/
-ENV LD_LIBRARY_PATH=/usr/local/lib:${LD_LIBRARY_PATH}
+COPY --from=ffmpeg /usr/lib/aarch64-linux-gnu/ /usr/lib/aarch64-linux-gnu/
 ```
 
 **Codecs:**
@@ -236,6 +237,47 @@ ENV LD_LIBRARY_PATH=/usr/local/lib:${LD_LIBRARY_PATH}
 
 ---
 
+### hometimeline-custom
+
+[HomeTimeline](https://github.com/dk307/HomeTimeline) — a Python 3.14 + FastAPI + React 18 timeline app with live WebRTC camera view — built with optimised FFmpeg from `hometimeline-base`. Includes go2rtc for WebRTC.
+
+**Pull:**
+```bash
+# Latest release
+docker pull ghcr.io/dk307/hometimeline-custom:latest
+
+# Pinned to specific release
+docker pull ghcr.io/dk307/hometimeline-custom:v0.12.5
+```
+
+**Run:**
+```bash
+docker run -d \
+  --name hometimeline \
+  -p 8080:8080 \
+  -p 8555:8555 \
+  -e DATABASE_URL="sqlite:///data/timeline.db" \
+  -e RECORDING_LOCATIONS="[]"
+  ghcr.io/dk307/hometimeline-custom:latest
+```
+
+**Ports:**
+| Port | Service |
+|------|---------|
+| 8080 | FastAPI backend |
+| 8555 | go2rtc WebRTC |
+
+**Environment variables:**
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `DATABASE_URL` | `sqlite:///data/timeline.db` | Database connection string |
+| `RECORDING_LOCATIONS` | `[]` | JSON array of recording paths |
+| `THUMBNAIL_DIR` | `/data/thumbnails` | Thumbnail storage path |
+| `LOG_LEVEL` | `INFO` | Python log level |
+| `GO2RTC_ENABLED` | `true` | Enable go2rtc WebRTC view |
+
+---
+
 ## How Updates Work
 
 Upstream releases are monitored. When a new release is detected:
@@ -245,6 +287,8 @@ Upstream releases are monitored. When a new release is detected:
 **yolo-rest:** `ncnn-release-monitor.yml` checks [Tencent/ncnn](https://github.com/Tencent/ncnn) daily → triggers `yolo-rest.yml` → build, test, push.
 
 **hometimeline-base:** `hometimeline-base.yml` checks [FFmpeg/FFmpeg](https://github.com/FFmpeg/FFmpeg) weekly (Monday 02:00 UTC) → build, test, push. FFmpeg has no GitHub Releases — only tags (`n*` format).
+
+**hometimeline-custom:** `hometimeline-release-monitor.yml` checks [dk307/HomeTimeline](https://github.com/dk307/HomeTimeline) daily → triggers `hometimeline-custom.yml` → build, test, push. Also auto-rebuilds when `hometimeline-base` is updated.
 
 1. Monitor workflow compares upstream tag against published GHCR tags
 2. If new, triggers build workflow (via `repository_dispatch` or direct schedule)
@@ -262,6 +306,9 @@ gh workflow run yolo-rest.yml -f ncnn_tag=20260526
 
 # hometimeline-base
 gh workflow run hometimeline-base.yml -f ffmpeg_version=8.1.2
+
+# hometimeline-custom
+gh workflow run hometimeline-custom.yml -f hometimeline_tag=v0.12.5
 ```
 
 ---
@@ -287,4 +334,7 @@ docker build \
   --build-arg FFMPEG_VERSION=8.1.2 \
   -t hometimeline-base:local \
   ./hometimeline-base
+
+# hometimeline-custom — clones upstream Dockerfile, needs buildx + build-context
+# (see .github/workflows/hometimeline-custom.yml for exact command)
 ```

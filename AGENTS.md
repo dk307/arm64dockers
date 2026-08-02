@@ -32,7 +32,9 @@ arm64devcontainer/
 │       ├── llama-cpp-embed-nomic.yml    # Build, test, push, update README
 │       ├── ncnn-release-monitor.yml     # Daily cron: checks ncnn releases
 │       ├── yolo-rest.yml               # Build, test, push, update README
-│       └── hometimeline-base.yml       # Weekly cron: FFmpeg base image
+│       ├── hometimeline-base.yml       # Weekly cron: FFmpeg base image
+│       ├── hometimeline-custom.yml     # Build HomeTimeline with optimised FFmpeg
+│       └── hometimeline-release-monitor.yml  # Daily cron: checks HomeTimeline releases
 ├── llama-cpp/
 │   └── Dockerfile                       # Multi-stage: build → model → runtime
 ├── yolo-rest/
@@ -184,7 +186,7 @@ CI smoke tests verify: health endpoint, HEALTHCHECK status, /models listing, det
 **Image:** `ghcr.io/dk307/hometimeline-base`
 **Purpose:** FFmpeg optimised for Snapdragon 8cx Gen 3 — base layer for downstream video containers
 **Codecs:** libx264, libx265, libvpx, libsvtav1, libfdk-aac, libopus, libjpeg-turbo
-**GPU:** Vulkan filters (dlopen), OpenCL filters (dlopen), libshaderc (linked)
+**GPU:** Vulkan encode/decode (dlopen at runtime)
 **No EXPOSE, no ENTRYPOINT** — pure base layer for `COPY --from`
 
 #### Key build facts
@@ -194,8 +196,7 @@ CI smoke tests verify: health endpoint, HEALTHCHECK status, /models listing, det
 - **SVT-AV1:** Built from source as **static** (`BUILD_SHARED_LIBS=OFF`), no NUMA — eliminates libSvtAv1Enc.so and libnuma.so runtime deps
 - **Base OS:** Debian bookworm (matches python:3.14-slim glibc for upstream compat)
 - **Vulkan:** `--enable-vulkan` with Vulkan headers from `vulkan-sdk-1.4.357.0` (bookworm ships 1.3.239, FFmpeg needs ≥1.3.277). dlopen'd at runtime, no link-time dependency.
-- **OpenCL:** `--enable-opencl` via ocl-icd-opencl-dev. dlopen'd at runtime, no link-time dependency.
-- **libshaderc:** `--enable-libshaderc` links `libshaderc_shared.so` at build time. Runtime dep: `libshaderc1`.
+- **libshaderc:** intentionally omitted — Debian bookworm's libshaderc.so has unresolved glslang/SPIRV-Tools references. Vulkan image filters (nlmeans_vulkan, scale_vulkan, etc.) are not built.
 - **Weekly cron** (Monday 02:00 UTC) — FFmpeg releases ~monthly, daily check unnecessary
 
 #### CFLAGS (exact — identical to llama-cpp and yolo-rest)
@@ -244,6 +245,40 @@ COPY --from=ffmpeg /usr/local/lib/ /usr/local/lib/
 - **SVT-AV1** is built from source because it's not in Debian repos.
 - **No EXPOSE, no ENTRYPOINT** — this is a base layer, not a runnable service.
 - Downstream images use `COPY --from` to extract binaries and shared libraries.
+
+### hometimeline-custom (active)
+
+**Image:** `ghcr.io/dk307/hometimeline-custom`
+**Purpose:** HomeTimeline app with optimised FFmpeg from hometimeline-base
+**Upstream:** [dk307/HomeTimeline](https://github.com/dk307/HomeTimeline) — Python 3.14 + FastAPI + Peewee + SQLite backend, React 18 + TypeScript + Vite + shadcn/ui frontend
+**Ports:** 8080 (FastAPI), 8555 (go2rtc WebRTC)
+**Build:** Clones upstream at pinned tag, uses upstream `docker/Dockerfile` with `--target app-custom-ffmpeg`
+
+#### Key build facts
+
+- **No static Dockerfile** — clones HomeTimeline repo and uses upstream's `docker/Dockerfile` directly
+- **FFmpeg source:** `--build-context ffmpeg-source=docker-image://ghcr.io/dk307/hometimeline-base:latest`
+- **Build target:** `app-custom-ffmpeg` — upstream's custom FFmpeg stage
+- **Patches applied via awk:** `libnuma1` install (libx265 transitive dep) before `ldconfig`
+- **Build metadata:** `GIT_SHA` and `BUILD_TIME` passed as build-args, exposed via `/api/v1/system_info`
+- **Runtime:** go2rtc 1.9.14, Python 3.14, all upstream deps
+- **Tags:** `v*.*.*` format (e.g. `v0.12.5`)
+
+#### CI/CD
+
+- **`hometimeline-release-monitor.yml`** — Daily cron checks dk307/HomeTimeline releases → triggers `hometimeline-custom.yml`
+- **`hometimeline-custom.yml`** — Build, test, push. Also triggered by `hometimeline-base-rebuild` event
+- **`hometimeline-base.yml`** — Dispatches `hometimeline-base-rebuild` after push to rebuild custom image
+
+#### Smoke tests (7 total)
+
+1. `/api/v1/health` endpoint
+2. Docker HEALTHCHECK status
+3. Diagnostics (container contents, ffmpeg binary, ldd, env vars)
+4. ffmpeg binary check (`ffmpeg -version`)
+5. Build metadata (`GIT_SHA`, `BUILD_TIME`, `/api/v1/system_info` API)
+6. go2rtc binary
+7. Python app loads
 
 ---
 
@@ -294,6 +329,24 @@ COPY --from=ffmpeg /usr/local/lib/ /usr/local/lib/
 - **Permissions:** `contents: write`, `packages: write`
 - **Note:** FFmpeg has no GitHub Releases — only tags (`n*` format). Weekly cron fetches latest `n*` tag from API.
 
+### hometimeline-release-monitor.yml
+
+- **Trigger:** Daily cron at 06:30 UTC + manual dispatch
+- **Runner:** `ubuntu-24.04-arm` (native ARM64)
+- **Logic:** Fetches latest dk307/HomeTimeline release → compares against GHCR tags → triggers `hometimeline-custom.yml` via `repository_dispatch` if new
+- **Permissions:** `contents: read`
+
+### hometimeline-custom.yml
+
+- **Triggers:** `repository_dispatch` (from release-monitor + hometimeline-base-rebuild) + `workflow_dispatch` (manual with hometimeline_tag input)
+- **Runner:** `ubuntu-24.04-arm` (native ARM64)
+- **Pipeline:** Clone upstream at pinned tag → Patch Dockerfile (libnuma1) → Build with `--target app-custom-ffmpeg` → Smoke test (7 tests) → Push → Update README → Commit
+- **Build args:** `GIT_SHA` (from git rev-parse), `BUILD_TIME` (from date), passed to upstream Dockerfile
+- **Cache:** Scoped per tag with base image digest for cache busting
+- **Smoke tests:** health endpoint, HEALTHCHECK status, diagnostics, ffmpeg binary, build metadata, go2rtc binary, Python app
+- **After push:** Auto-updates README.md tags column and commits to main
+- **Permissions:** `contents: write`, `packages: write`
+
 ### Tag policy
 
 | Container | Tag | Behavior |
@@ -304,6 +357,8 @@ COPY --from=ffmpeg /usr/local/lib/ /usr/local/lib/
 | yolo-rest | `:latest` | Most recent build |
 | hometimeline-base | `:ffmpeg-NNN.N.N` | Pinned FFmpeg version (overwrites on rebuild) |
 | hometimeline-base | `:latest` | Most recent build |
+| hometimeline-custom | `:v*.*.*` | Specific HomeTimeline release (overwrites on rebuild) |
+| hometimeline-custom | `:latest` | Most recent build |
 
 ---
 
@@ -313,6 +368,7 @@ COPY --from=ffmpeg /usr/local/lib/ /usr/local/lib/
 - **llama-cpp/Dockerfile** is the actual build definition — keep in sync with PLAN.md
 - **yolo-rest/Dockerfile** is the actual build definition for yolo-rest
 - **hometimeline-base/Dockerfile** is the actual build definition for hometimeline-base
+- **hometimeline-custom.yml** clones upstream HomeTimeline and uses their Dockerfile directly
 - **README.md** is auto-updated by CI — manual edits are overwritten on next build. Edit the workflow, not the README, to change tag presentation.
 - **AGENTS.md** (this file) — update when adding containers or changing workflows
 
@@ -330,6 +386,9 @@ gh workflow run yolo-rest.yml --ref main -f ncnn_tag=20260526
 
 # hometimeline-base
 gh workflow run hometimeline-base.yml --ref main -f ffmpeg_version=8.1.2
+
+# hometimeline-custom
+gh workflow run hometimeline-custom.yml --ref main -f hometimeline_tag=v0.12.5
 ```
 
 ### Check build status
@@ -337,6 +396,7 @@ gh workflow run hometimeline-base.yml --ref main -f ffmpeg_version=8.1.2
 gh run list --workflow=llama-cpp-embed-nomic.yml --limit=5
 gh run list --workflow=yolo-rest.yml --limit=5
 gh run list --workflow=hometimeline-base.yml --limit=5
+gh run list --workflow=hometimeline-custom.yml --limit=5
 gh run view <run-id> --log
 ```
 
@@ -368,6 +428,11 @@ docker run -d --name yolo-fast -p 18080:18080 \
 
 # hometimeline-base (test only — no ENTRYPOINT)
 docker run --rm ghcr.io/dk307/hometimeline-base:latest ffmpeg -version
+
+# hometimeline-custom
+docker run -d --name hometimeline -p 8080:8080 -p 8555:8555 \
+  -e DATABASE_URL="sqlite:///data/timeline.db" \
+  ghcr.io/dk307/hometimeline-custom:latest
 ```
 
 ### Host-side optimizations

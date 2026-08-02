@@ -15,6 +15,8 @@ Build and publish ARM64-only Docker containers to GitHub Container Registry (GHC
 |---|-----------|----------|---------|
 | 1 | `llama-cpp-embed-nomic` | [ggml-org/llama.cpp](https://github.com/ggml-org/llama.cpp) | nomic-embed-text embedding server |
 | 2 | `ncnn` | [Tencent/ncnn](https://github.com/Tencent/ncnn) | Neural network inference framework |
+| 3 | `hometimeline-base` | [FFmpeg/FFmpeg](https://github.com/FFmpeg/FFmpeg) | FFmpeg optimised for ARM64 Cortex-A78C |
+| 4 | `hometimeline-custom` | [dk307/HomeTimeline](https://github.com/dk307/HomeTimeline) | HomeTimeline with optimised FFmpeg |
 
 **Platform:** Linux ARM64 only (Cortex-A78C class)
 **Registry:** `ghcr.io/<owner>/` (public)
@@ -674,19 +676,19 @@ Optimised FFmpeg + ffprobe base image for the Snapdragon 8cx Gen 3 (SC8280XP). P
 | hls | Yes |
 | https | Yes |
 
-### 10.7 GPU Acceleration (Vulkan + OpenCL)
+### 10.7 GPU Acceleration (Vulkan)
 
-**Vulkan filters:** dlopen'd at runtime (no link-time dep). Requires Vulkan ≥ 1.3.277 headers — bookworm ships 1.3.239, so headers are installed from `KhronosGroup/Vulkan-Headers` (`vulkan-sdk-1.4.357.0`) and `vulkan.pc` is patched.
+**Vulkan encode/decode:** `--enable-vulkan` with Vulkan headers from `KhronosGroup/Vulkan-Headers` (`vulkan-sdk-1.4.357.0`). Bookworm ships 1.3.239, FFmpeg 8.1.2 requires ≥1.3.277. Headers are installed from source and `vulkan.pc` is patched. Vulkan is loaded at runtime via dlopen — no link-time dependency. Enables h264_vulkan, hevc_vulkan, av1_vulkan hw accel and encode.
 
-**OpenCL filters:** dlopen'd at runtime (no link-time dep). Built via `ocl-icd-opencl-dev`.
+**libshaderc:** intentionally omitted — Debian bookworm's `libshaderc.so` has unresolved glslang/SPIRV-Tools references that the BFD linker rejects. Vulkan image filters (nlmeans_vulkan, scale_vulkan, etc.) require `spirv_library` which depends on libshaderc — skipped. Can be added later by building shaderc from source or upgrading to a fixed Debian package.
 
-**libshaderc:** SPIR-V shader compiler, linked at build time (`--enable-libshaderc`). Runtime dep: `libshaderc1` (installed in runtime stage). Required by most Vulkan filters (blend, gblur, nlmeans, overlay, scale, etc.).
+**OpenCL:** intentionally omitted — `--enable-opencl` links `libOpenCL.so.1` at build time, which is not available in downstream python:3.14-slim runtime.
 
 | Feature | Build dep | Link-time dep | Runtime dep |
 |---------|-----------|---------------|-------------|
-| Vulkan filters | `libvulkan-dev` + headers ≥ 1.3.277 | No (dlopen) | None in container |
-| OpenCL filters | `ocl-icd-opencl-dev` | No (dlopen) | None in container |
-| libshaderc | `libshaderc-dev` | Yes (`libshaderc_shared.so`) | `libshaderc1` |
+| Vulkan encode/decode | `libvulkan-dev` + headers ≥ 1.3.277 | No (dlopen) | None in container |
+| Vulkan image filters | `libshaderc-dev` (not built) | Yes | `libshaderc1` (not included) |
+| OpenCL | `ocl-icd-opencl-dev` (not built) | Yes | `libOpenCL.so.1` (not included) |
 
 ### 10.8 CMake / Configure flags (exact)
 
@@ -716,7 +718,7 @@ BUILD_DEC=ON
   --enable-libx264 --enable-libx265 --enable-libvpx \
   --enable-libsvtav1 --enable-libfdk-aac \
   --enable-openssl \
-  --enable-vulkan --enable-libshaderc --enable-opencl \
+  --enable-vulkan \
   --enable-protocol=file --enable-protocol=pipe \
   --enable-protocol=tcp --enable-protocol=rtsp \
   --enable-protocol=rtmp --enable-protocol=hls \
@@ -791,3 +793,39 @@ ENV LD_LIBRARY_PATH=/usr/local/lib:${LD_LIBRARY_PATH}
 **Note:** FFmpeg has no GitHub Releases — only tags (`n*` format). The weekly cron fetches the latest `n*` tag from the GitHub API, compares against GHCR tags, and builds if new.
 
 **Smoke tests:** ffmpeg binary, ffprobe binary, required codecs, required protocols, ARM64 build config, GPL/libx264 verification.
+
+---
+
+## 11. Container: hometimeline-custom
+
+### 11.1 Upstream Details
+
+**Repository:** https://github.com/dk307/HomeTimeline
+**Upstream release tag:** `v0.12.5` (Aug 2 2026) — tags follow `v*.*.*` format
+**Stack:** Python 3.14 + FastAPI + Peewee + SQLite (backend), React 18 + TypeScript + Vite + shadcn/ui (frontend)
+**Runtime:** go2rtc 1.9.14 for WebRTC live camera view
+
+### 11.2 Purpose
+
+HomeTimeline app built with optimised FFmpeg from `hometimeline-base`. Clones upstream at pinned tag and uses their `docker/Dockerfile` directly with `--target app-custom-ffmpeg`.
+
+### 11.3 Key build facts
+
+- **No static Dockerfile** — clones HomeTimeline repo and uses upstream's `docker/Dockerfile`
+- **FFmpeg source:** `--build-context ffmpeg-source=docker-image://ghcr.io/dk307/hometimeline-base:latest`
+- **Build target:** `app-custom-ffmpeg` — upstream's custom FFmpeg stage
+- **Patches applied via awk:** `libnuma1` install (libx265 transitive dep)
+- **Build metadata:** `GIT_SHA` and `BUILD_TIME` passed as build-args
+
+### 11.4 Ports
+
+| Port | Service |
+|------|---------|
+| 8080 | FastAPI backend |
+| 8555 | go2rtc WebRTC |
+
+### 11.5 CI/CD
+
+- `hometimeline-release-monitor.yml` — Daily cron checks upstream releases
+- `hometimeline-custom.yml` — Build, test, push (7 smoke tests)
+- `hometimeline-base.yml` — Dispatches rebuild after FFmpeg base image update
