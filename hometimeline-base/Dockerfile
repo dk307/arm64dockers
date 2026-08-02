@@ -39,6 +39,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libjpeg62-turbo-dev \
     libssl-dev \
     libvulkan-dev libshaderc-dev ocl-icd-opencl-dev libnuma-dev \
+    libglslang-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # Vulkan headers >= 1.3.277 required by FFmpeg 8.1.2 (bookworm ships 1.3.239).
@@ -54,9 +55,17 @@ RUN git clone --depth 1 --branch ${VULKAN_HEADERS_VERSION} \
     && pkg-config --modversion vulkan \
     && rm -rf /tmp/vulkan-headers
 
-# FFmpeg 8.x uses pkg-config name "spirv_library" for libshaderc, but Debian
-# only ships shaderc.pc.  Create a symlink so FFmpeg's configure can find it.
-RUN ln -sf shaderc.pc /usr/lib/aarch64-linux-gnu/pkgconfig/spirv_library.pc
+# FFmpeg 8.x uses pkg-config name "spirv_library" but test_pkg_config actually
+# queries package "shaderc" (first word of version string).  Debian's shaderc.pc
+# only has -lshaderc but libshaderc.so has unresolved symbols in libglslang
+# and libSPIRV-Tools.  Fix shaderc.pc to include transitive deps, then also
+# create spirv_library.pc as a symlink for any code path that uses it directly.
+RUN GLSLANG_LIBS=$(pkg-config --libs --static glslang 2>/dev/null || echo "-lglslang -lglslang-default-resource-limits -lMachineIndependent -lGenericCodeGen -lOSDependent -lSPIRV -lSPIRV-Tools-opt -lSPIRV-Tools -lpthread -lm") \
+    && sed -i "s|^Libs:.*|Libs: -L\${libdir} -lshaderc ${GLSLANG_LIBS}|" \
+        /usr/lib/aarch64-linux-gnu/pkgconfig/shaderc.pc \
+    && ln -sf shaderc.pc /usr/lib/aarch64-linux-gnu/pkgconfig/spirv_library.pc \
+    && echo "--- shaderc.pc (fixed) ---" \
+    && cat /usr/lib/aarch64-linux-gnu/pkgconfig/shaderc.pc
 
 # LLVM 21 from official apt repo
 RUN wget -qO /tmp/llvm-snapshot.gpg.key https://apt.llvm.org/llvm-snapshot.gpg.key \
@@ -202,12 +211,12 @@ FROM --platform=linux/arm64 debian:bookworm AS runtime
 
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Runtime deps: libshaderc1 (linked by ffmpeg for Vulkan SPIR-V compilation).
-# Vulkan and OpenCL ICD loaders are NOT needed here — ffmpeg loads them via
-# dlopen at runtime from the host system.
+# Runtime deps: libshaderc1 + libglslang1 (libshaderc.so has unresolved
+# symbols in libglang/libSPIRV-Tools).  Vulkan and OpenCL ICD loaders are
+# NOT needed — ffmpeg loads them via dlopen from the host system.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libgcc-s1 libstdc++6 curl ca-certificates \
-    libshaderc1 \
+    libshaderc1 libglslang1 \
     && rm -rf /var/lib/apt/lists/*
 
 # FFmpeg binaries (statically linked against FFmpeg core + SVT-AV1; dynamic for codec .so)
