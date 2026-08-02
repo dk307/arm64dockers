@@ -60,7 +60,8 @@ RUN git clone --depth 1 --branch ${VULKAN_HEADERS_VERSION} \
 # only has -lshaderc but libshaderc.so has unresolved symbols in libglslang
 # and libSPIRV-Tools.  Fix shaderc.pc to include transitive deps, then also
 # create spirv_library.pc as a symlink for any code path that uses it directly.
-RUN GLSLANG_LIBS=$(pkg-config --libs --static glslang 2>/dev/null || echo "-lglslang -lglslang-default-resource-limits -lMachineIndependent -lGenericCodeGen -lOSDependent -lSPIRV -lSPIRV-Tools-opt -lSPIRV-Tools -lpthread -lm") \
+# Use shared glslang (not --static) to avoid chasing transitive .a deps.
+RUN GLSLANG_LIBS=$(pkg-config --libs glslang 2>/dev/null || echo "-lglslang") \
     && sed -i "s|^Libs:.*|Libs: -L\${libdir} -lshaderc ${GLSLANG_LIBS} -lstdc++ -lm|" \
         /usr/lib/aarch64-linux-gnu/pkgconfig/shaderc.pc \
     && ln -sf shaderc.pc /usr/lib/aarch64-linux-gnu/pkgconfig/spirv_library.pc \
