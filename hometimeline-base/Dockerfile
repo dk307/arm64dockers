@@ -37,7 +37,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libfdk-aac-dev libopus-dev \
     libavcodec-dev \
     libjpeg62-turbo-dev \
-    libvulkan-dev \
     libssl-dev \
     && rm -rf /var/lib/apt/lists/*
 
@@ -119,6 +118,11 @@ WORKDIR /src/ffmpeg
 
 ENV PKG_CONFIG_PATH=/usr/local/lib/pkgconfig
 
+# Build with --enable-static --disable-shared: FFmpeg's own libs (.a) are
+# statically linked into the binary.  External codec .so files (libx264,
+# libx265, libvpx, libfdk-aac, libSvtAv1Enc) are still dynamically linked
+# and must be present at runtime.  This is the layout the upstream
+# HomeTimeline Dockerfile expects.
 RUN ./configure \
     --prefix=/usr/local \
     --cc=clang --cxx=clang++ \
@@ -130,7 +134,6 @@ RUN ./configure \
     --enable-libvpx \
     --enable-libsvtav1 \
     --enable-libfdk-aac \
-    --enable-libopus \
     --enable-openssl \
     --enable-protocol=file \
     --enable-protocol=pipe \
@@ -139,8 +142,8 @@ RUN ./configure \
     --enable-protocol=rtmp \
     --enable-protocol=hls \
     --enable-protocol=https \
-    --enable-shared \
-    --disable-static \
+    --enable-static \
+    --disable-shared \
     --disable-doc \
     --extra-cflags="${CFLAGS}" \
     --extra-cxxflags="${CFLAGS}" \
@@ -159,12 +162,19 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libgcc-s1 libstdc++6 curl ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-# FFmpeg binaries and self-installed libs
+# FFmpeg binaries (statically linked against FFmpeg core; dynamic for codec .so)
 COPY --from=ffmpeg /usr/local/bin/ffmpeg /usr/local/bin/ffmpeg
 COPY --from=ffmpeg /usr/local/bin/ffprobe /usr/local/bin/ffprobe
 COPY --from=ffmpeg /usr/local/lib/ /usr/local/lib/
 
-# Codec shared libraries from build stage (FFmpeg links dynamically against these)
+# Create libsvtav1.so* symlink — upstream Dockerfile copies libsvtav1.so*
+# but SVT-AV1 4.x installs as libSvtAv1Enc.so*
+RUN cd /usr/local/lib && \
+    for f in libSvtAv1Enc.so*; do \
+        [ -e "$f" ] && ln -sf "$f" "libsvtav1.${f#libSvtAv1Enc}" 2>/dev/null; \
+    done
+
+# Codec shared libraries — needed by the upstream HomeTimeline Dockerfile
 COPY --from=ffmpeg /usr/lib/aarch64-linux-gnu/ /usr/lib/aarch64-linux-gnu/
 
 RUN ldconfig
