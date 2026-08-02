@@ -54,6 +54,10 @@ RUN git clone --depth 1 --branch ${VULKAN_HEADERS_VERSION} \
     && pkg-config --modversion vulkan \
     && rm -rf /tmp/vulkan-headers
 
+# FFmpeg 8.x uses pkg-config name "spirv_library" for libshaderc, but Debian
+# only ships shaderc.pc.  Create a symlink so FFmpeg's configure can find it.
+RUN ln -sf shaderc.pc /usr/lib/aarch64-linux-gnu/pkgconfig/spirv_library.pc
+
 # LLVM 21 from official apt repo
 RUN wget -qO /tmp/llvm-snapshot.gpg.key https://apt.llvm.org/llvm-snapshot.gpg.key \
     && gpg --dearmor < /tmp/llvm-snapshot.gpg.key > /usr/share/keyrings/llvm-snapshot.gpg \
@@ -140,15 +144,12 @@ WORKDIR /src/ffmpeg
 ENV PKG_CONFIG_PATH=/usr/local/lib/pkgconfig:/usr/lib/aarch64-linux-gnu/pkgconfig
 
 # Debug: verify pkg-config can find all required libraries
+# FFmpeg 8.x looks for pkg-config name "spirv_library" (not "shaderc")
 RUN echo "=== pkg-config checks ===" \
-    && pkg-config --modversion shaderc \
-    && pkg-config --cflags shaderc \
-    && pkg-config --libs shaderc \
-    && echo "--- static flags ---" \
-    && pkg-config --static --cflags shaderc 2>&1 \
-    && pkg-config --static --libs shaderc 2>&1 \
-    && echo "--- shaderc.pc content ---" \
-    && cat /usr/lib/aarch64-linux-gnu/pkgconfig/shaderc.pc \
+    && pkg-config --modversion spirv_library \
+    && pkg-config --static --libs spirv_library \
+    && echo "--- spirv_library.pc content ---" \
+    && cat /usr/lib/aarch64-linux-gnu/pkgconfig/spirv_library.pc \
     && echo "--- glslang check ---" \
     && pkg-config --modversion glslang 2>&1 || true \
     && echo "--- shaderc lib files ---" \
