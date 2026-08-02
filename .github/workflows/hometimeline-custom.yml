@@ -102,16 +102,10 @@ jobs:
               print "RUN apt-get update \&\& apt-get install -y --no-install-recommends libnuma1 \&\& rm -rf /var/lib/apt/lists/*"
               pasted_numa = 1
             }
-            /^COPY --from=ffmpeg-source.*libvpx/ && !pasted_shaderc {
-              print
-              print "COPY --from=ffmpeg-source /usr/lib/aarch64-linux-gnu/libshaderc_shared.so* /usr/lib/aarch64-linux-gnu/"
-              pasted_shaderc = 1
-              next
-            }
             { print }
           ' docker/Dockerfile > docker/Dockerfile.tmp && mv docker/Dockerfile.tmp docker/Dockerfile
           echo "Patched Dockerfile:"
-          grep -n "libnuma\|libshaderc\|ldconfig" docker/Dockerfile
+          grep -n "libnuma\|ldconfig" docker/Dockerfile
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
