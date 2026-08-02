@@ -632,7 +632,7 @@ Trigger `llama-cpp-embed-nomic.yml` via `workflow_dispatch` with a specific rele
 **Repository:** https://github.com/FFmpeg/FFmpeg
 **Upstream release tag:** `n8.1.2` (Jun 17 2026) — tags only, no GitHub Releases
 **Compiler:** Clang 21+ (C and C++) — mandatory, matches other containers
-**Base OS:** Ubuntu 26.04 LTS
+**Base OS:** Debian bookworm (matches python:3.14-slim glibc for upstream compat)
 
 ### 10.2 Purpose
 
@@ -750,7 +750,7 @@ docker build --build-arg SVTAV1_VERSION=3.0.2 -t hometimeline-base:local ./homet
 ```dockerfile
 FROM ghcr.io/dk307/hometimeline-base:latest AS ffmpeg
 
-FROM ubuntu:26.04 AS app-base
+FROM debian:bookworm AS app-base
 # ... install your deps ...
 
 FROM app-base AS final

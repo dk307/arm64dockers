@@ -190,8 +190,8 @@ CI smoke tests verify: health endpoint, HEALTHCHECK status, /models listing, det
 
 - **Compiler:** Clang 21+ (same as other containers)
 - **FFmpeg:** Release tag `n8.1.2` — tags only, no GitHub Releases
-- **SVT-AV1:** Built from source (not in Ubuntu repos) — tracked separately
-- **Base OS:** Ubuntu 26.04 LTS
+- **SVT-AV1:** Built from source (not in Debian repos) — tracked separately
+- **Base OS:** Debian bookworm (matches python:3.14-slim glibc for upstream compat)
 - **Vulkan:** Enabled (experimental, Adreno 690)
 - **Weekly cron** (Monday 02:00 UTC) — FFmpeg releases ~monthly, daily check unnecessary
 
@@ -238,7 +238,7 @@ COPY --from=ffmpeg /usr/local/lib/ /usr/local/lib/
 #### Notes
 
 - FFmpeg has **no GitHub Releases** — only tags (`n*` format). Weekly cron fetches latest `n*` tag from API.
-- **SVT-AV1** is built from source because it's not in Ubuntu repos.
+- **SVT-AV1** is built from source because it's not in Debian repos.
 - **No EXPOSE, no ENTRYPOINT** — this is a base layer, not a runnable service.
 - Downstream images use `COPY --from` to extract binaries and shared libraries.
 

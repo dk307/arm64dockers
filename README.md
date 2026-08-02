@@ -214,7 +214,7 @@ docker run --rm ghcr.io/dk307/hometimeline-base:latest ffmpeg -codecs 2>/dev/nul
 ```dockerfile
 FROM ghcr.io/dk307/hometimeline-base:latest AS ffmpeg
 
-FROM ubuntu:26.04 AS final
+FROM debian:bookworm AS final
 COPY --from=ffmpeg /usr/local/bin/ffmpeg /usr/local/bin/ffmpeg
 COPY --from=ffmpeg /usr/local/bin/ffprobe /usr/local/bin/ffprobe
 COPY --from=ffmpeg /usr/local/lib/ /usr/local/lib/

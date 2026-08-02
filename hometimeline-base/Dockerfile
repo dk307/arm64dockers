@@ -1,33 +1,54 @@
 # =============================================================================
 # hometimeline-base: FFmpeg optimised for Snapdragon 8cx Gen 3
 # ARM64-only, Cortex-A78C tuned — base layer for COPY --from
+#
+# Built on Debian bookworm to match the glibc of python:3.14-slim (the
+# upstream HomeTimeline runtime).  This ensures .so files copied from this
+# image are ABI-compatible with the target container.
 # =============================================================================
 
 ARG FFMPEG_VERSION=8.1.2
 ARG SVTAV1_VERSION=4.2.0
+ARG CLANG_VERSION=21
 
 # ---------------------------------------------------------------------------
 # Stage 1: Build dependencies
 # ---------------------------------------------------------------------------
-FROM --platform=linux/arm64 ubuntu:26.04 AS deps
+FROM --platform=linux/arm64 debian:bookworm AS deps
 
 ENV DEBIAN_FRONTEND=noninteractive
 
-RUN apt-get update && apt-get install -y --no-install-recommends software-properties-common \
-    && add-apt-repository -y multiverse \
+# Enable non-free for libfdk-aac-dev
+RUN sed -i 's/^deb /deb contrib non-free non-free-firmware /' /etc/apt/sources.list
+
+# LLVM 21 from the official apt repo
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        wget gpg \
+    && wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | gpg --dearmor \
+        > /usr/share/keyrings/llvm.gpg \
+    && echo "deb [signed-by=/usr/share/keyrings/llvm.gpg] http://apt.llvm.org/bookworm/ llvm-toolchain-bookworm-${CLANG_VERSION} main" \
+        > /etc/apt/sources.list.d/llvm.list \
     && apt-get update && apt-get install -y --no-install-recommends \
-    clang lld llvm libomp-dev \
+    clang-${CLANG_VERSION} lld-${CLANG_VERSION} llvm-${CLANG_VERSION} libomp-${CLANG_VERSION}-dev \
     cmake make git autoconf automake libtool pkg-config \
     nasm yasm curl ca-certificates \
     libx264-dev libx265-dev libvpx-dev \
     libfdk-aac-dev libopus-dev \
-    libjpeg-dev \
+    libavcodec-dev \
+    libjpeg62-turbo-dev \
     libvulkan-dev \
     libssl-dev \
     && rm -rf /var/lib/apt/lists/*
 
+# Symlink clang versioned binaries so the rest of the Dockerfile can use
+# plain "clang" / "clang++" / "lld" / "llvm-strip".
+RUN ln -sf /usr/bin/clang-${CLANG_VERSION} /usr/bin/clang \
+    && ln -sf /usr/bin/clang++-${CLANG_VERSION} /usr/bin/clang++ \
+    && ln -sf /usr/bin/lld-${CLANG_VERSION} /usr/bin/lld \
+    && ln -sf /usr/bin/llvm-strip-${CLANG_VERSION} /usr/bin/llvm-strip
+
 # ---------------------------------------------------------------------------
-# Stage 2: Build SVT-AV1 from source (not in Ubuntu repos)
+# Stage 2: Build SVT-AV1 from source (not in Debian repos)
 # ---------------------------------------------------------------------------
 FROM --platform=linux/arm64 deps AS svtav1
 
@@ -106,9 +127,9 @@ RUN ./configure \
     && make install
 
 # ---------------------------------------------------------------------------
-# Stage 4: Runtime — minimal Ubuntu 26.04 with binaries + shared libs
+# Stage 4: Runtime — minimal Debian with binaries + shared libs
 # ---------------------------------------------------------------------------
-FROM --platform=linux/arm64 ubuntu:26.04 AS runtime
+FROM --platform=linux/arm64 debian:bookworm AS runtime
 
 ENV DEBIAN_FRONTEND=noninteractive
 
@@ -124,14 +145,8 @@ COPY --from=ffmpeg /usr/local/lib/ /usr/local/lib/
 # Codec shared libraries from build stage (FFmpeg links dynamically against these)
 COPY --from=ffmpeg /usr/lib/aarch64-linux-gnu/ /usr/lib/aarch64-linux-gnu/
 
-# libavcodec.so* is built by FFmpeg with --prefix=/usr/local, so it lives in
-# /usr/local/lib/.  Copy it to /usr/lib/aarch64-linux-gnu/ as well so the
-# upstream HomeTimeline Dockerfile can COPY it from FFMPEG_SRC_CODEC_LIB_DIR.
-RUN cp /usr/local/lib/libavcodec.so* /usr/lib/aarch64-linux-gnu/ 2>/dev/null || true
-
 RUN ldconfig
 
-ENV LD_LIBRARY_PATH=/usr/local/lib
 ENV PATH=/usr/local/bin:${PATH}
 
 LABEL org.opencontainers.image.title="hometimeline-base" \
