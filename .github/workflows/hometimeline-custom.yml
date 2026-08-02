@@ -72,10 +72,20 @@ jobs:
         name: Checkout arm64dockers repo
 
       - name: Clone HomeTimeline at pinned tag
+        id: clone
         run: |
           echo "=== Cloning HomeTimeline ${{ steps.tag.outputs.tag }} ==="
           git clone --depth 1 --branch ${{ steps.tag.outputs.tag }} \
             https://github.com/${{ env.HOMETIMELINE_REPO }}.git hometimeline-src
+
+          # Capture build metadata for upstream Dockerfile ARGs
+          GIT_SHA=$(git -C hometimeline-src rev-parse HEAD)
+          BUILD_TIME=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          echo "git_sha=$GIT_SHA" >> "$GITHUB_OUTPUT"
+          echo "build_time=$BUILD_TIME" >> "$GITHUB_OUTPUT"
+          echo "GIT_SHA: $GIT_SHA"
+          echo "BUILD_TIME: $BUILD_TIME"
+
           echo "Upstream Dockerfile:"
           head -20 hometimeline-src/docker/Dockerfile
           echo "..."
@@ -149,6 +159,8 @@ jobs:
             ffmpeg-source=docker-image://ghcr.io/dk307/hometimeline-base:latest
           build-args: |
             TARGETARCH=arm64
+            GIT_SHA=${{ steps.clone.outputs.git_sha }}
+            BUILD_TIME=${{ steps.clone.outputs.build_time }}
           cache-from: type=gha,scope=hometimeline-custom-${{ steps.tag.outputs.tag }}-${{ steps.base-digest.outputs.digest }}
           cache-to: type=gha,mode=max,scope=hometimeline-custom-${{ steps.tag.outputs.tag }}-${{ steps.base-digest.outputs.digest }}
 
@@ -226,6 +238,14 @@ jobs:
           docker exec hometimeline-test ldd /usr/local/bin/ffmpeg 2>&1 | head -20 || echo "ldd failed"
           echo "--- /app contents ---"
           docker exec hometimeline-test ls /app/ 2>&1 | head -10 || echo "not found"
+          echo "--- Build metadata env vars ---"
+          docker exec hometimeline-test printenv GIT_SHA BUILD_TIME 2>&1 || echo "env check failed"
+          echo "--- system_info build ---"
+          docker exec hometimeline-test python -c "
+          import urllib.request, json
+          data = json.loads(urllib.request.urlopen('http://localhost:8080/api/v1/system_info').read())
+          print(json.dumps(data.get('build', {}), indent=2))
+          " 2>&1 || echo "system_info check failed"
 
       - name: Test 4 — ffmpeg binary (custom build)
         run: |
@@ -239,9 +259,48 @@ jobs:
           fi
           echo "PASS: ffmpeg binary OK"
 
-      - name: Test 5 — go2rtc binary
+      - name: Test 5 — build metadata (GIT_SHA, BUILD_TIME)
         run: |
-          echo "=== Test 5: go2rtc binary ==="
+          echo "=== Test 5: Build metadata ==="
+          GIT_SHA=$(docker exec hometimeline-test printenv GIT_SHA 2>&1)
+          BUILD_TIME=$(docker exec hometimeline-test printenv BUILD_TIME 2>&1)
+          echo "GIT_SHA: $GIT_SHA"
+          echo "BUILD_TIME: $BUILD_TIME"
+
+          if [ -z "$GIT_SHA" ] || [ "$GIT_SHA" = "unknown" ]; then
+            echo "FAIL: GIT_SHA not set or still 'unknown'"
+            exit 1
+          fi
+          if [ -z "$BUILD_TIME" ] || [ "$BUILD_TIME" = "unknown" ]; then
+            echo "FAIL: BUILD_TIME not set or still 'unknown'"
+            exit 1
+          fi
+          echo "PASS: Build metadata OK"
+
+          echo ""
+          echo "Verifying via system_info API..."
+          RESP=$(docker exec hometimeline-test python -c "
+          import urllib.request, json
+          data = json.loads(urllib.request.urlopen('http://localhost:8080/api/v1/system_info').read())
+          build = data.get('build', {})
+          print(json.dumps(build))
+          " 2>&1)
+          echo "$RESP" | jq . 2>/dev/null || echo "$RESP"
+          GIT_SHA_API=$(echo "$RESP" | jq -r '.git_sha' 2>/dev/null)
+          BUILD_TIME_API=$(echo "$RESP" | jq -r '.build_time' 2>/dev/null)
+          if [ "$GIT_SHA_API" = "unknown" ] || [ -z "$GIT_SHA_API" ]; then
+            echo "FAIL: system_info git_sha is unknown"
+            exit 1
+          fi
+          if [ "$BUILD_TIME_API" = "unknown" ] || [ -z "$BUILD_TIME_API" ]; then
+            echo "FAIL: system_info build_time is unknown"
+            exit 1
+          fi
+          echo "PASS: system_info build metadata OK"
+
+      - name: Test 6 — go2rtc binary
+        run: |
+          echo "=== Test 6: go2rtc binary ==="
           OUTPUT=$(docker exec hometimeline-test go2rtc --version 2>&1 || true)
           if [ -z "$OUTPUT" ]; then
             echo "WARN: go2rtc not responding (may need config), checking binary exists"
@@ -250,9 +309,9 @@ jobs:
           echo "PASS: go2rtc binary present"
           echo "$OUTPUT" | head -3
 
-      - name: Test 6 — Python app loads
+      - name: Test 7 — Python app loads
         run: |
-          echo "=== Test 6: Python app ==="
+          echo "=== Test 7: Python app ==="
           OUTPUT=$(docker exec hometimeline-test python -c "import app.main; print('app module OK')" 2>&1)
           echo "$OUTPUT"
           if ! echo "$OUTPUT" | grep -q "app module OK"; then
