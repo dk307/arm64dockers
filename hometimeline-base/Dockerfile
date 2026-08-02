@@ -146,11 +146,23 @@ WORKDIR /src/ffmpeg
 # can find our local libs (SVT-AV1) AND system libs (vulkan, etc.)
 ENV PKG_CONFIG_PATH=/usr/local/lib/pkgconfig:/usr/lib/aarch64-linux-gnu/pkgconfig
 
-# Debug: verify pkg-config finds vulkan
-RUN echo "=== pkg-config checks ===" \
-    && pkg-config --exists --print-errors "vulkan" \
-    && pkg-config --modversion vulkan \
-    && echo "=== vulkan pkg-config OK ==="
+# Debug: verify vulkan detection (header check + pkg-config)
+RUN echo "=== Vulkan detection debug ===" \
+    && ls /usr/include/vulkan/vulkan.h \
+    && grep VK_VERSION_1_3 /usr/include/vulkan/vulkan_core.h | head -3 \
+    && grep VK_HEADER_VERSION_COMPLETE /usr/include/vulkan/vulkan_core.h | head -3 \
+    && pkg-config --exists --print-errors "vulkan >= 1.3.277" \
+    && echo "pkg-config check: PASS" \
+    && echo '#include <vulkan/vulkan.h>' > /tmp/vk_test.cpp \
+    && echo '#if defined(VK_VERSION_1_3)' >> /tmp/vk_test.cpp \
+    && echo 'int x = 1;' >> /tmp/vk_test.cpp \
+    && echo '#else' >> /tmp/vk_test.cpp \
+    && echo '#error VK_VERSION_1_3 not defined' >> /tmp/vk_test.cpp \
+    && echo '#endif' >> /tmp/vk_test.cpp \
+    && echo 'int main() { return 0; }' >> /tmp/vk_test.cpp \
+    && clang++ -std=c++17 $(pkg-config --cflags vulkan) -c /tmp/vk_test.cpp -o /tmp/vk_test.o \
+    && echo "Vulkan header test: PASS" \
+    && rm -f /tmp/vk_test.*
 
 # Build with --enable-static --disable-shared: FFmpeg's own libs (.a) and
 # SVT-AV1 (.a) are statically linked into the binary.  External codec .so
@@ -186,8 +198,10 @@ RUN (./configure \
     --extra-ldflags="-flto=thin" \
     && make -j"$(nproc)" \
     && make install) \
-  || { echo "=== CONFIGURE FAILED — dumping config.log ===" ; \
-       cat ffbuild/config.log 2>/dev/null | tail -200 ; \
+  || { echo "=== CONFIGURE FAILED — dumping vulkan-related config.log ===" ; \
+       grep -i vulkan ffbuild/config.log 2>/dev/null | tail -50 ; \
+       echo "=== dumping last 300 lines of config.log ===" ; \
+       cat ffbuild/config.log 2>/dev/null | tail -300 ; \
        echo "=== END config.log ===" ; \
        exit 1 ; }
 
