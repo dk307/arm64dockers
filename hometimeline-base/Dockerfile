@@ -18,23 +18,18 @@ FROM --platform=linux/arm64 debian:bookworm AS deps
 
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Enable non-free for libfdk-aac-dev (DEB822 format on bookworm)
-RUN if [ -f /etc/apt/sources.list.d/debian.sources ]; then \
-        sed -i 's/^Components: main$/Components: main contrib non-free non-free-firmware/' \
-            /etc/apt/sources.list.d/debian.sources; \
-    else \
-        sed -i 's/^deb /deb contrib non-free non-free-firmware /' /etc/apt/sources.list; \
-    fi
+# Enable contrib + non-free for libfdk-aac-dev
+RUN echo "deb http://deb.debian.org/debian bookworm main contrib non-free non-free-firmware" \
+        > /etc/apt/sources.list \
+    && echo "deb http://deb.debian.org/debian bookworm-updates main contrib non-free non-free-firmware" \
+        >> /etc/apt/sources.list \
+    && echo "deb http://security.debian.org/debian-security bookworm-security main contrib non-free non-free-firmware" \
+        >> /etc/apt/sources.list \
+    && rm -f /etc/apt/sources.list.d/debian.sources
 
-# LLVM 21 from the official apt repo
+# Core build deps
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        wget gpg \
-    && wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | gpg --dearmor \
-        > /usr/share/keyrings/llvm.gpg \
-    && echo "deb [signed-by=/usr/share/keyrings/llvm.gpg] http://apt.llvm.org/bookworm/ llvm-toolchain-bookworm-${CLANG_VERSION} main" \
-        > /etc/apt/sources.list.d/llvm.list \
-    && apt-get update && apt-get install -y --no-install-recommends \
-    clang-${CLANG_VERSION} lld-${CLANG_VERSION} llvm-${CLANG_VERSION} libomp-${CLANG_VERSION}-dev \
+    wget gpg lsb-release gnupg \
     cmake make git autoconf automake libtool pkg-config \
     nasm yasm curl ca-certificates \
     libx264-dev libx265-dev libvpx-dev \
@@ -44,6 +39,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libvulkan-dev \
     libssl-dev \
     && rm -rf /var/lib/apt/lists/*
+
+# LLVM 21 via official install script
+RUN wget -qO /tmp/llvm.sh https://apt.llvm.org/llvm.sh \
+    && chmod +x /tmp/llvm.sh \
+    && /tmp/llvm.sh ${CLANG_VERSION} \
+    && rm /tmp/llvm.sh \
+    && apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # Symlink clang versioned binaries so the rest of the Dockerfile can use
 # plain "clang" / "clang++" / "lld" / "llvm-strip".
