@@ -40,12 +40,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libssl-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# LLVM 21 via official install script
-RUN wget -qO /tmp/llvm.sh https://apt.llvm.org/llvm.sh \
-    && chmod +x /tmp/llvm.sh \
-    && /tmp/llvm.sh ${CLANG_VERSION} \
-    && rm /tmp/llvm.sh \
-    && apt-get clean && rm -rf /var/lib/apt/lists/*
+# LLVM 21 from official apt repo
+RUN wget -qO /tmp/llvm-snapshot.gpg.key https://apt.llvm.org/llvm-snapshot.gpg.key \
+    && gpg --dearmor < /tmp/llvm-snapshot.gpg.key > /usr/share/keyrings/llvm-snapshot.gpg \
+    && rm /tmp/llvm-snapshot.gpg.key \
+    && echo "deb [signed-by=/usr/share/keyrings/llvm-snapshot.gpg] http://apt.llvm.org/bookworm/ llvm-toolchain-bookworm-21 main" \
+        > /etc/apt/sources.list.d/llvm-21.list \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends \
+        clang-21 lld-21 llvm-21 libomp-21-dev \
+    && rm -rf /var/lib/apt/lists/*
 
 # Symlink clang versioned binaries so the rest of the Dockerfile can use
 # plain "clang" / "clang++" / "lld" / "llvm-strip".
