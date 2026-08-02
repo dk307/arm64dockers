@@ -114,10 +114,10 @@ jobs:
           # 2. Copy GPU libs (libshaderc, libOpenCL) from ffmpeg-source
           #    These are needed at runtime for --enable-libshaderc and --enable-opencl
           awk '
-            /COPY --from=ffmpeg-source \/usr\/lib\/aarch64-linux-gnu\/libvpx/ {
+            /COPY --from=ffmpeg-source.*libvpx/ {
               print
-              print "COPY --from=ffmpeg-source /usr/lib/aarch64-linux-gnu/libOpenCL.so* /usr/lib/aarch64-linux-gnu/"
-              print "COPY --from=ffmpeg-source /usr/local/lib/libshaderc.so* /usr/local/lib/"
+              print "COPY --from=ffmpeg-source ${FFMPEG_SRC_CODEC_LIB_DIR}/libOpenCL.so* /usr/lib/aarch64-linux-gnu/"
+              print "COPY --from=ffmpeg-source ${FFMPEG_SRC_LIB_DIR}/libshaderc*.so* /usr/local/lib/"
               next
             }
             { print }
