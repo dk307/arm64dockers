@@ -84,6 +84,13 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
+      - name: Get hometimeline-base digest for cache busting
+        id: base-digest
+        run: |
+          DIGEST=$(docker manifest inspect ghcr.io/dk307/hometimeline-base:latest 2>/dev/null | jq -r '.config.digest // .manifests[0].digest' || echo "unknown")
+          echo "digest=$DIGEST" >> "$GITHUB_OUTPUT"
+          echo "hometimeline-base digest: $DIGEST"
+
       - name: Log in to GHCR
         uses: docker/login-action@v3
         with:
@@ -120,8 +127,8 @@ jobs:
             ffmpeg-source=docker-image://ghcr.io/dk307/hometimeline-base:latest
           build-args: |
             TARGETARCH=arm64
-          cache-from: type=gha,scope=hometimeline-custom-${{ steps.tag.outputs.tag }}
-          cache-to: type=gha,mode=max,scope=hometimeline-custom-${{ steps.tag.outputs.tag }}
+          cache-from: type=gha,scope=hometimeline-custom-${{ steps.tag.outputs.tag }}-${{ steps.base-digest.outputs.digest }}
+          cache-to: type=gha,mode=max,scope=hometimeline-custom-${{ steps.tag.outputs.tag }}-${{ steps.base-digest.outputs.digest }}
 
       # ── Smoke tests ──────────────────────────────────────────
 
