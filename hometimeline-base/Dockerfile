@@ -54,29 +54,17 @@ RUN git clone --depth 1 --branch ${VULKAN_HEADERS_VERSION} \
     && pkg-config --modversion vulkan \
     && rm -rf /tmp/vulkan-headers
 
-# FFmpeg 8.x uses pkg-config name "spirv_library" but test_pkg_config actually
-# queries package "shaderc" (first word of version string).  Debian's
-# libshaderc.so has unresolved SPIRV-Tools symbols.  Override shaderc.pc to
-# link libshaderc_combined.a — a self-contained static archive that bundles
-# shaderc + SPIRV-Tools + glslang.  Also create spirv_library.pc symlink.
-RUN cat > /usr/lib/aarch64-linux-gnu/pkgconfig/shaderc.pc << 'PCEOF'
-prefix=/usr
-exec_prefix=${prefix}
-libdir=${exec_prefix}/lib/aarch64-linux-gnu
-
-Name: shaderc
-Description: Shaderc shader compiler library (combined static build)
-Version: 2023.2.1
-Libs: -L${libdir} -lshaderc_combined
-Libs.private: -lstdc++ -lm -lpthread
-Cflags: -I${prefix}/include
-PCEOF
-
+# FFmpeg 8.x uses pkg-config package "shaderc" (extracted from "shaderc >= 2019.1"
+# version string by test_pkg_config).  The default shaderc.pc from Debian links
+# -lshaderc (shared).  FFmpeg's configure compile+link test only references
+# shaderc_compiler_initialize, so shared linking works — no glslang/SPIRV-Tools
+# symbols needed at configure time.  The FFmpeg binary links libshaderc_shared.so
+# at runtime.
 RUN ln -sf shaderc.pc /usr/lib/aarch64-linux-gnu/pkgconfig/spirv_library.pc \
-    && echo "--- shaderc.pc (combined static) ---" \
+    && echo "--- shaderc.pc ---" \
     && cat /usr/lib/aarch64-linux-gnu/pkgconfig/shaderc.pc \
-    && echo "--- combined lib check ---" \
-    && ls -la /usr/lib/aarch64-linux-gnu/libshaderc_combined*
+    && echo "--- libshaderc check ---" \
+    && ls -la /usr/lib/aarch64-linux-gnu/libshaderc*
 
 # LLVM 21 from official apt repo
 RUN wget -qO /tmp/llvm-snapshot.gpg.key https://apt.llvm.org/llvm-snapshot.gpg.key \
@@ -163,23 +151,22 @@ WORKDIR /src/ffmpeg
 # can find our local libs (SVT-AV1) AND system libs (shaderc, vulkan, etc.)
 ENV PKG_CONFIG_PATH=/usr/local/lib/pkgconfig:/usr/lib/aarch64-linux-gnu/pkgconfig
 
-# Debug: verify pkg-config finds shaderc (FFmpeg uses it via name "shaderc")
-# shaderc.pc points to libshaderc_combined.a (self-contained static archive)
+# Debug: verify pkg-config finds shaderc and shared lib is available
 RUN echo "=== pkg-config checks ===" \
     && pkg-config --exists --print-errors "shaderc >= 2019.1" \
     && pkg-config --modversion shaderc \
     && pkg-config --libs shaderc \
     && echo "--- shaderc.pc ---" \
     && cat /usr/lib/aarch64-linux-gnu/pkgconfig/shaderc.pc \
-    && echo "--- combined lib check ---" \
-    && ls -la /usr/lib/aarch64-linux-gnu/libshaderc_combined* \
+    && echo "--- libshaderc check ---" \
+    && ls -la /usr/lib/aarch64-linux-gnu/libshaderc* \
     && echo "=== shaderc pkg-config OK ==="
 
 # Build with --enable-static --disable-shared: FFmpeg's own libs (.a) and
 # SVT-AV1 (.a) are statically linked into the binary.  External codec .so
-# files (libx264, libx265, libvpx, libfdk-aac, libshaderc) are still
-# dynamically linked and must be present at runtime.  Vulkan and OpenCL are
-# loaded at runtime via dlopen — no link-time dependency.
+# files (libx264, libx265, libvpx, libfdk-aac) and libshaderc_shared.so are
+# still dynamically linked and must be present at runtime.  Vulkan and OpenCL
+# are loaded at runtime via dlopen — no link-time dependency.
 RUN (./configure \
     --prefix=/usr/local \
     --cc=clang --cxx=clang++ \
@@ -222,16 +209,16 @@ FROM --platform=linux/arm64 debian:bookworm AS runtime
 
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Runtime deps: minimal — ffmpeg is statically linked against FFmpeg core,
-# SVT-AV1, and shaderc (via libshaderc_combined.a).  Only external codec
-# .so files (libx264, libx265, libvpx, libfdk-aac) and basic libs are needed.
-# Vulkan and OpenCL ICD loaders are NOT needed — ffmpeg loads them via dlopen.
+# Runtime deps: minimal — ffmpeg is statically linked against FFmpeg core and
+# SVT-AV1.  External codec .so files (libx264, libx265, libvpx, libfdk-aac,
+# libshaderc_shared) and basic libs are needed.  Vulkan and OpenCL ICD loaders
+# are NOT needed — ffmpeg loads them via dlopen.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libgcc-s1 libstdc++6 curl ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-# FFmpeg binaries (statically linked against FFmpeg core + SVT-AV1 + shaderc;
-# dynamic for codec .so: libx264, libx265, libvpx, libfdk-aac)
+# FFmpeg binaries (statically linked against FFmpeg core + SVT-AV1;
+# dynamic for codec .so: libx264, libx265, libvpx, libfdk-aac, libshaderc_shared)
 COPY --from=ffmpeg /usr/local/bin/ffmpeg /usr/local/bin/ffmpeg
 COPY --from=ffmpeg /usr/local/bin/ffprobe /usr/local/bin/ffprobe
 COPY --from=ffmpeg /usr/local/lib/ /usr/local/lib/
