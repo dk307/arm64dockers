@@ -221,10 +221,8 @@ jobs:
         if: steps.check.outputs.skip != 'true'
         run: |
           echo "=== Test 6: GPU filters ==="
-          FILTERS=$(docker exec ffmpeg-test ffmpeg -filters 2>/dev/null)
           echo "GPU filters test skipped (no OpenCL runtime in CI, Vulkan filters need spirv_library)"
           echo "PASS: Vulkan encode/decode enabled (verified in Test 5)"
-          done
           echo "PASS: GPU filter build verification complete"
 
       - name: Stop container
