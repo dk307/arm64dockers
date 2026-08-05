@@ -247,7 +247,7 @@ COPY --from=ffmpeg /usr/lib/aarch64-linux-gnu/ /usr/lib/aarch64-linux-gnu/
 docker pull ghcr.io/dk307/hometimeline-custom:latest
 
 # Pinned to specific release
-docker pull ghcr.io/dk307/hometimeline-custom:v0.12.6
+docker pull ghcr.io/dk307/hometimeline-custom:v0.12.7
 ```
 
 **Run:**
