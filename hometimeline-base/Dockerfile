@@ -57,10 +57,9 @@ RUN git clone --depth 1 --branch ${VULKAN_HEADERS_VERSION} \
     && pkg-config --modversion vulkan \
     && rm -rf /tmp/vulkan-headers
 
-# NOTE: --enable-libshaderc requires building shaderc from source.
-# Debian bookworm's libshaderc.so has unresolved glslang/SPIRV-Tools symbols
-# that the BFD linker rejects.  Building from source produces a self-contained
-# .so with all symbols resolved.
+# NOTE: shaderc is no longer needed by FFmpeg >= 9 (built-in spirv_compiler).
+# It is kept for FFmpeg 8.x compat and any downstream consumers of libshaderc.
+# Building from source produces a self-contained .so with all symbols resolved.
 
 # LLVM 21 from official apt repo
 RUN wget -qO /tmp/llvm-snapshot.gpg.key https://apt.llvm.org/llvm-snapshot.gpg.key \
@@ -165,7 +164,7 @@ COPY --from=svtav1 /usr/local/lib/pkgconfig/ /usr/local/lib/pkgconfig/
 COPY --from=shaderc /usr/local/lib/libshaderc* /usr/local/lib/
 COPY --from=shaderc /usr/local/include/shaderc/ /usr/local/include/shaderc/
 COPY --from=shaderc /usr/local/lib/pkgconfig/shaderc.pc /usr/local/lib/pkgconfig/
-RUN ln -sf shaderc.pc /usr/local/lib/pkgconfig/spirv_library.pc
+RUN ldconfig
 
 # Create dummy libsvtav1.so.0 so upstream COPY --from=ffmpeg-source libsvtav1.so* succeeds.
 # The real SVT-AV1 is statically linked into ffmpeg — this file is never loaded.
@@ -208,7 +207,6 @@ RUN (./configure \
     --enable-libfdk-aac \
     --enable-openssl \
     --enable-vulkan \
-    --enable-libshaderc \
     --enable-opencl \
     --enable-protocol=file \
     --enable-protocol=pipe \
