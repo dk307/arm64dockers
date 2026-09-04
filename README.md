@@ -196,7 +196,7 @@ FFmpeg optimised for the Snapdragon 8cx Gen 3 (Cortex-A78C). Built from source w
 docker pull ghcr.io/dk307/hometimeline-base:latest
 
 # Pinned to specific FFmpeg version
-docker pull ghcr.io/dk307/hometimeline-base:ffmpeg-8.1.2
+docker pull ghcr.io/dk307/hometimeline-base:ffmpeg-9.0.1
 ```
 
 **Test:**
