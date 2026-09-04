@@ -208,7 +208,7 @@ jobs:
 
           for FLAG in enable-gpl enable-libx264 enable-libx265 enable-libvpx \
                       enable-libsvtav1 enable-libfdk-aac enable-openssl \
-                      enable-vulkan enable-libshaderc enable-opencl; do
+                      enable-vulkan enable-opencl; do
             if ! echo "$CONFIG" | grep -q "$FLAG"; then
               echo "FAIL: $FLAG not in build config"
               exit 1
@@ -223,7 +223,7 @@ jobs:
           echo "=== Test 6: GPU filters ==="
           FILTERS=$(docker exec ffmpeg-test ffmpeg -filters 2>/dev/null)
 
-          # Vulkan filters (need libshaderc for spirv_library)
+          # Vulkan filters (FFmpeg >= 9 uses built-in spirv_compiler)
           for F in scale_vulkan nlmeans_vulkan gblur_vulkan overlay_vulkan; do
             if echo "$FILTERS" | grep -q "$F"; then
               echo "  PASS: $F"

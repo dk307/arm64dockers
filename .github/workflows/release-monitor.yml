@@ -24,16 +24,16 @@ jobs:
           echo "Repository: ${{ env.LLAMA_CPP_REPO }}"
           echo ""
           
-          RESPONSE=$(curl -sf https://api.github.com/repos/${{ env.LLAMA_CPP_REPO }}/releases/latest)
+          RESPONSE=$(curl -sf "https://api.github.com/repos/${{ env.LLAMA_CPP_REPO }}/releases?per_page=1")
           if [ $? -ne 0 ]; then
             echo "ERROR: Failed to fetch releases from GitHub API"
-            echo "URL: https://api.github.com/repos/${{ env.LLAMA_CPP_REPO }}/releases/latest"
+            echo "URL: https://api.github.com/repos/${{ env.LLAMA_CPP_REPO }}/releases?per_page=1"
             exit 1
           fi
           
-          TAG=$(echo "$RESPONSE" | jq -r '.tag_name')
-          PUBLISHED=$(echo "$RESPONSE" | jq -r '.published_at')
-          URL=$(echo "$RESPONSE" | jq -r '.html_url')
+          TAG=$(echo "$RESPONSE" | jq -r '.[0].tag_name')
+          PUBLISHED=$(echo "$RESPONSE" | jq -r '.[0].published_at')
+          URL=$(echo "$RESPONSE" | jq -r '.[0].html_url')
           
           echo "Upstream tag: $TAG"
           echo "Published: $PUBLISHED"

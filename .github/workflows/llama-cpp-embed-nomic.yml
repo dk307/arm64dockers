@@ -39,9 +39,9 @@ jobs:
             exit 1
           fi
           
-          if [[ ! "$TAG" =~ ^b[0-9]+$ ]]; then
+          if [[ ! "$TAG" =~ ^(b[0-9]+|v[0-9]+.*)$ ]]; then
             echo "ERROR: Invalid tag format '$TAG'"
-            echo "Expected format: b followed by digits (e.g. b5570)"
+            echo "Expected format: b followed by digits (e.g. b5570) or v version (e.g. v0.3.0)"
             exit 1
           fi
           
