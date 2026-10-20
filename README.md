@@ -105,7 +105,7 @@ YOLO object-detection REST server using ncnn. Bundles **yolo26n** (fast, ~40.9 m
 docker pull ghcr.io/dk307/yolo-rest:latest
 
 # Pinned to specific ncnn version
-docker pull ghcr.io/dk307/yolo-rest:ncnn-20260526
+docker pull ghcr.io/dk307/yolo-rest:ncnn-20261020
 ```
 
 **Run:**
